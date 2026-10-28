@@ -4,7 +4,7 @@ import * as data from '../data.js';
 import * as outbox from '../outbox.js';
 import { CONFIG } from '../config.js';
 import { today, isoDay } from '../dates.js';
-import { buildTrainerView } from '../logic/batches.js';
+import { buildScopedView } from '../logic/batches.js';
 import { buildUnclaimed, planAssignment } from '../logic/candidates.js';
 import { cleanIds, isIso, norm, UserError } from '../logic/common.js';
 
@@ -15,8 +15,10 @@ export function getSession(user) {
 /** All batches for one trainer. */
 export function getTrainerBatches(user, trainer) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, trainer);
-  return buildTrainerView(data.masterRows(target), target, today(), CONFIG.BATCH_MERGE_DAYS);
+  const sc = data.scope(s, trainer);
+  const view = buildScopedView(data.masterRows(sc.list), sc.key === data.ALL ? sc.list : sc.key, today(), CONFIG.BATCH_MERGE_DAYS, data.nameOf);
+  view.trainer = sc.key;
+  return view;
 }
 
 function mappedIds() {

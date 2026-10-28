@@ -8,7 +8,7 @@ import * as data from '../data.js';
 import * as outbox from '../outbox.js';
 import { CONFIG, SERVER } from '../config.js';
 import { today, stamp } from '../dates.js';
-import { buildTrainerView, buildNhtList } from '../logic/batches.js';
+import { buildScopedView, buildNhtList } from '../logic/batches.js';
 import { checkChange, updatedFields, pendingByTrainee } from '../logic/changes.js';
 import { parseOjtRows, scheduleOjtRebuild } from './ojt.js';
 import { ojtTeamList } from '../logic/ojt.js';
@@ -21,9 +21,9 @@ const isOjtField = f => f === 'OJT Team' || f.indexOf('OJT Input: ') === 0;
 /** Active NHT Details: trainees under this trainer not yet moved to OJT, with KC, mocks, OJT answers and requests. */
 export function getNhtCandidates(user, trainer) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, trainer);
+  const sc = data.scope(s, trainer), target = sc.key === data.ALL ? sc.list : sc.key;
   const master = data.masterRows(target), day = today();
-  const view = buildTrainerView(master, target, day, CONFIG.BATCH_MERGE_DAYS);
+  const view = buildScopedView(master, target, day, CONFIG.BATCH_MERGE_DAYS, data.nameOf);
   const batchOf = {};
   view.batches.forEach(b => b.trainees.forEach(p => { batchOf[p.empId] = { name: b.name, key: b.key, start: b.start }; }));
   const list = buildNhtList(master, target, batchOf, data.nhtStage());
@@ -40,7 +40,12 @@ export function getNhtCandidates(user, trainer) {
     c.mocks = mocks[c.empId] || [];
     c.pending = pending[c.empId] || {};
   });
-  return { trainer: target, today: day, candidates: list, departments: data.departments(), isAdmin: s.isAdmin };
+  return { trainer: sc.key, today: day, candidates: list, departments: data.departments(), isAdmin: s.isAdmin };
+}
+
+/** The trainer a change belongs to: the one open on the page, or (from the All view) the trainee's own trainer. */
+function saveTarget(s, trainer, empId) {
+  return String(trainer || '').toLowerCase() === data.ALL ? data.trainerOf(s, empId) : data.assertTrainer(s, trainer);
 }
 
 /** Everything checkChange needs for one trainee in training. */
@@ -60,7 +65,7 @@ function nhtContext(target, id, batchHasMock) {
  */
 export function submitChange(user, req, batchHasMock) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, req && req.trainer);
+  const target = saveTarget(s, req && req.trainer, req && req.empId);
   const id = normId(req.empId), field = String(req.field || '');
   if (isOjtField(field)) return submitOjtChange(s, target, id, field, req.value);
   const ctx = nhtContext(target, id, batchHasMock);
@@ -179,7 +184,7 @@ export function submitPageChanges(user, req) {
   const mock = changes.find(c => c.field === 'Mock');
   if (mock) {
     const s = data.session(user);
-    const target = data.assertTrainer(s, req.trainer);
+    const target = saveTarget(s, req.trainer, req.empId);
     let err = '';
     try { err = checkChange('Mock', mock.value, nhtContext(target, normId(req.empId), false)).error || ''; } catch (e) { err = e.message; }
     if (err) return { results: [{ field: 'Mock', ok: false, error: err }].concat(changes.filter(c => c !== mock).map(c => ({ field: c.field, ok: false, error: 'Not saved: fix the mock first.' }))) };

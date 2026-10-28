@@ -112,10 +112,14 @@
   function sum(list, k) { return list.reduce(function (a, b) { return a + b[k]; }, 0); }
   function plural(n, one, many) { return n.toLocaleString('en-IN') + ' ' + (n === 1 ? one : many); }
   function stageClass(s) { return s === 'In training' ? 'training' : s === 'In OJT' ? 'ojt' : s === 'OJT pending' ? 'pending' : 'done'; }
+  var ALL = 'all';            // the trainer picker's first option: every trainer this person can open
   function trainerName(email) {
+    if (email === ALL) return 'All trainers';
     var t = (state.session.trainers || []).filter(function (x) { return x.email === email; })[0];
     return t ? t.name : email;
   }
+  /** In the All trainers view, the trainer a row belongs to (shown next to the Emp ID). */
+  function byTrainer(x) { return state.trainer === ALL && x && x.trainer ? ' · ' + esc(trainerName(x.trainer)) : ''; }
 
   /** Batch figures for a set of trainees. Same counting rules as the T&D Performance Tracker. */
   function figures(b, trainees) {
@@ -214,7 +218,7 @@
       if (!s || s.role === 'none') { renderSignin(); return; }
       state.screen = 'app'; state.tab = 'home'; state.month = ''; state.notice = null;
       var own = s.trainers.filter(function (t) { return t.email === s.email; })[0];
-      openTrainer((own || s.trainers[0] || {}).email || '');
+      openTrainer(s.trainers.length > 1 ? ALL : (own || s.trainers[0] || {}).email || '');
       loadUnclaimed();
       if (s.isAdmin) loadApprovals();
     }).catch(fail);
@@ -256,10 +260,16 @@
     }).catch(fail);
   }
 
+  /** Whom Assign gives candidates to: the trainer open at the top, or (All trainers) the one picked in the bar. */
+  function assignTarget() {
+    if (state.trainer !== ALL) return state.trainer;
+    if (state.assignTo === undefined) state.assignTo = state.session.trainers.some(function (t) { return t.email === state.session.email; }) ? state.session.email : '';
+    return state.assignTo;
+  }
   function assign() {
     var ids = pickedIds();
-    if (!ids.length || state.busy) return;
-    var trainer = state.trainer;
+    var trainer = assignTarget();
+    if (!ids.length || state.busy || !trainer) return;
     state.busy = true; state.notice = null; renderApp();
     call('assignCandidates', { ids: ids, trainer: trainer, trainingStart: state.trainingStart }).then(function (res) {
       state.busy = false; state.picked = {};
@@ -275,7 +285,7 @@
       renderApp();
       state.att = null;                // attendance roster reloads with the new trainees
       state.nht = null;                // so does the NHT list
-      openTrainer(trainer, true);      // pull the new rows into the batch view
+      openTrainer(state.trainer, true); // pull the new rows into the batch view
       if (skipped.length) loadUnclaimed();
     }).catch(fail);
   }
@@ -316,7 +326,8 @@
   function renderApp() {
     var s = state.session, v = state.view;
     var picker = s.trainers.length > 1
-      ? '<label class="who"><span class="label">Trainer</span><select id="trainer-pick">' + s.trainers.map(function (t) {
+      ? '<label class="who"><span class="label">Trainer</span><select id="trainer-pick">' +
+          '<option value="' + ALL + '"' + (state.trainer === ALL ? ' selected' : '') + '>All trainers</option>' + s.trainers.map(function (t) {
           return '<option value="' + esc(t.email) + '"' + (t.email === state.trainer ? ' selected' : '') + '>' + esc(t.name) + '</option>';
         }).join('') + '</select></label>'
       : '';
@@ -340,7 +351,7 @@
       html += homePage(who, mine);
     } else {
       var title = tab.id === 'batches'
-        ? '<div class="label">' + (mine ? 'My batches' : 'Batches of ' + esc(who)) + '</div><h1>Batch Wise Summary</h1>'
+        ? '<div class="label">' + (mine ? 'My batches' : state.trainer === ALL ? 'All trainers\' batches' : 'Batches of ' + esc(who)) + '</div><h1>Batch Wise Summary</h1>'
         : tab.id === 'unclaimed'
         ? '<div class="label">Not mapped to any trainer yet</div><h1>Unclaimed Candidates</h1>'
         : tab.id === 'approvals'
@@ -436,7 +447,7 @@
       var status = p.active
         ? '<span class="pill good">Active</span>'
         : '<span class="pill crit">Left</span>' + (p.attritionDay !== null ? ' <span class="dim num">day ' + p.attritionDay + '</span>' : '');
-      return '<tr><td><div class="nm">' + esc(p.name) + (p.lateral ? ' <span class="chip">Lateral</span>' : '') + '</div><div class="id">' + esc(p.empId) + '</div></td>' +
+      return '<tr><td><div class="nm">' + esc(p.name) + (p.lateral ? ' <span class="chip">Lateral</span>' : '') + '</div><div class="id">' + esc(p.empId) + byTrainer(p) + '</div></td>' +
         '<td class="num">' + esc(day(p.doj)) + '</td>' +
         '<td>' + esc(p.subTeam || p.dept || '–') + '</td>' +
         '<td>' + esc(p.mode) + '</td>' +
@@ -482,9 +493,10 @@
       unclaimed: state.unclaimed ? plural(state.unclaimed.filter(function (c) { return c.active && !c.excluded; }).length, 'active candidate', 'active candidates') + ' waiting' : 'Loading…'
     };
     var first = (who || '').split(' ')[0];
-    return '<div class="home-head"><div class="label">' + (mine ? 'Trainer Desk' : 'Viewing as manager') + '</div>' +
-      '<h1>' + (mine ? 'Welcome, ' + esc(first) : esc(who)) + '</h1>' +
-      '<p class="dim">Pick what you want to work on.</p></div>' +
+    var all = state.trainer === ALL;
+    return '<div class="home-head"><div class="label">' + (mine ? 'Trainer Desk' : 'Viewing as ' + esc((state.session.roleLabel || 'manager').toLowerCase())) + '</div>' +
+      '<h1>' + (mine ? 'Welcome, ' + esc(first) : all ? 'All trainers' : esc(who)) + '</h1>' +
+      '<p class="dim">' + (all ? 'Everything below covers all ' + state.session.trainers.length + ' trainers you can see. Pick a trainer at the top to see just theirs.' : 'Pick what you want to work on.') + '</p></div>' +
       (state.error ? '' : '') +
       '<div class="cards">' + TABS.filter(function (t) { return !t.adminOnly || state.session.isAdmin; }).map(function (t) {
         return '<button class="card' + (t.ready ? '' : ' later') + '" data-tab="' + t.id + '">' +
@@ -707,7 +719,7 @@
                     : '<i class="cell off" title="' + esc(tip) + '"></i>';
         }).join('');
         var g = gaps(t), dayN = t.doj && t.doj <= date ? daysBetween(t.doj, date) + 1 : 0;
-        html += '<tr><td><div class="nm">' + esc(t.name) + '</div><div class="id">' + esc(t.empId) + ' · ' + esc(t.subTeam || '–') + '</div></td>' +
+        html += '<tr><td><div class="nm">' + esc(t.name) + '</div><div class="id">' + esc(t.empId) + ' · ' + esc(t.subTeam || '–') + byTrainer(t) + '</div></td>' +
           '<td class="num"><div>' + esc(day(t.doj)) + (dayN ? ' <span class="dim">· day ' + dayN + '</span>' : '') + '</div>' +
             '<div class="id">' + (t.trackEstimated ? 'OJT end not set' : 'OJT ends ' + esc(day(t.trackUntil))) + '</div></td>' +
           '<td>' + seg + '</td>' +
@@ -763,7 +775,7 @@
         html += '<tr class="grp"><td class="who-col">' + esc(t.batch) + '</td><td colspan="' + (days.length + 1) + '"></td></tr>';
       }
       var missing = 0;
-      html += '<tr><td class="who-col"><div class="nm">' + esc(t.name) + '</div><div class="id">' + esc(t.empId) + '</div></td>' +
+      html += '<tr><td class="who-col"><div class="nm">' + esc(t.name) + '</div><div class="id">' + esc(t.empId) + byTrainer(t) + '</div></td>' +
         days.map(function (x) {
           if (!canMark(t, x)) return '<td class="dcol"><i class="cell off" title="' + esc(whyNot(t, x)) + '"></i></td>';
           var c = attCode(t.empId, x), dirty = state.attPending[x] && has(state.attPending[x], t.empId);
@@ -838,7 +850,7 @@
           var dayN = c.doj && c.doj <= state.nht.today ? daysBetween(c.doj, state.nht.today) + 1 : 0, m = lastMock(c);
           return '<button class="nht-card" data-nht="' + esc(c.empId) + '">' +
             '<span class="nht-top"><span class="nm">' + esc(c.name) + '</span><span class="chip">' + esc(c.mode || '–') + '</span></span>' +
-            '<span class="id">' + esc(c.empId) + ' · DOJ ' + esc(day(c.doj)) + (dayN ? ' · day ' + dayN : '') + '</span>' +
+            '<span class="id">' + esc(c.empId) + ' · DOJ ' + esc(day(c.doj)) + (dayN ? ' · day ' + dayN : '') + byTrainer(c) + '</span>' +
             (c.department
               ? '<span class="nht-dept"><b>' + esc(c.department) + '</b>' + (c.subTeam ? ' · ' + esc(c.subTeam) : '') + '</span>'
               : '<span class="pill warn">Department not set</span>') +
@@ -1338,7 +1350,7 @@
         var pend = r.pending && Object.keys(r.pending).length;
         html += '<tr class="ojt-row' + (open ? ' open' : '') + '" data-ojt-open="' + esc(r.empId) + '" tabindex="0" aria-expanded="' + open + '">' +
           '<td><span class="nm">' + esc(r.name) + '</span>' + (pend ? ' <span class="dot" title="Waiting for approval"></span>' : '') +
-          '<span class="id">' + esc(r.empId) + '</span></td>' +
+          '<span class="id">' + esc(r.empId) + byTrainer(r) + '</span></td>' +
           cols.map(function (c) { return '<td class="' + (c[2] || '') + '">' + c[1](r) + '</td>'; }).join('') +
           '<td class="r chev-col"><span class="chev" aria-hidden="true">' + (open ? '▴' : '▾') + '</span></td></tr>';
         if (open) html += '<tr class="ojt-detail-row"><td colspan="' + span + '">' + ojtDetail(r, v) + '</td></tr>';
@@ -1576,7 +1588,8 @@
     var admin = state.session.isAdmin, removedView = state.show === 'removed';
     var inMonthList = unclaimedInMonth(false), removedList = admin ? unclaimedInMonth(true) : [];
     var list = unclaimedMatches(), rows = list.slice(0, state.shown);
-    var picked = pickedIds(), target = state.trainer === state.session.email ? 'me' : trainerName(state.trainer);
+    var assignTo = assignTarget();
+    var picked = pickedIds(), target = assignTo === state.session.email ? 'me' : trainerName(assignTo);
     var allOn = rows.length > 0 && rows.every(function (c) { return state.picked[c.empId]; });
     var allMatching = list.length > 0 && list.every(function (c) { return state.picked[c.empId]; });
 
@@ -1617,7 +1630,11 @@
         html += '<label for="training-start">Training start date (optional)<input type="date" id="training-start" value="' + esc(state.trainingStart) + '"></label>' +
           (picked.length > MAX_ASSIGN
             ? '<span class="bar-note">Assign up to ' + MAX_ASSIGN + ' at a time</span>'
-            : '<button class="btn btn-accent" id="assign"' + (state.busy ? ' disabled' : '') + '>' + (state.busy ? 'Working…' : 'Assign to ' + esc(target)) + '</button>');
+            : (state.trainer === ALL
+                ? '<label for="assign-to">Assign to<select id="assign-to"><option value="">Pick a trainer</option>' + state.session.trainers.map(function (t) {
+                    return '<option value="' + esc(t.email) + '"' + (t.email === assignTo ? ' selected' : '') + '>' + esc(t.name) + '</option>'; }).join('') + '</select></label>'
+                : '') +
+              '<button class="btn btn-accent" id="assign"' + (state.busy || !assignTo ? ' disabled' : '') + '>' + (state.busy ? 'Working…' : assignTo ? 'Assign to ' + esc(target) : 'Assign') + '</button>');
         if (admin) {
           html += '<span class="bar-split" aria-hidden="true"></span>' +
             '<label for="reason">Reason<input type="text" id="reason" class="reason" placeholder="Not handled by the training team" value="' + esc(state.reason) + '"></label>' +
@@ -1752,6 +1769,7 @@
     on('training-start', 'onchange', function () { state.trainingStart = this.value; });
     on('clear-picks', 'onclick', function () { state.picked = {}; renderApp(); });
     on('assign', 'onclick', assign);
+    on('assign-to', 'onchange', function () { state.assignTo = this.value; renderApp(); });
     // attendance
     var goDate = function (d) { if (d) { state.attDate = d; renderApp(); } };
     on('att-date', 'onchange', function () { goDate(this.value); });

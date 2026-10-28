@@ -4,7 +4,7 @@ import { CONFIG } from './config.js';
 import { resolveSession } from './logic/org.js';
 import { departmentsFromRows, latestKc, kcKeys } from './logic/changes.js';
 import { parseOjtTargets } from './logic/ojt.js';
-import { normId, norm, UserError } from './logic/common.js';
+import { normId, norm, prettyName, UserError } from './logic/common.js';
 import { isoDay } from './dates.js';
 
 const MASTER_SELECT = `SELECT emp_id empId, trainer, manager, mentor, doj, work_mode mode, name, email, phone, department, sub_team subTeam,
@@ -34,9 +34,13 @@ const CLAIMED_SELECT = `SELECT m.emp_id empId, m.trainer, m.manager, m.mentor, $
   LEFT JOIN (SELECT emp_id, name, status, doj, location, phone, MIN(seq) FROM in_hr GROUP BY emp_id) h ON h.emp_id = m.emp_id
   WHERE m.emp_id IN (SELECT emp_id FROM claims UNION SELECT emp_id FROM in_prior_claims)`;
 
-/** Master Dashboard rows of trainees claimed in Trainer Desk (in sheet order), optionally for one trainer. */
+/** Master Dashboard rows of trainees claimed in Trainer Desk (in sheet order): one trainer, a list of trainers, or everyone (''). */
 export function masterRows(trainer) {
   loaded();
+  if (Array.isArray(trainer)) {
+    const want = new Set(trainer);
+    return db.all(CLAIMED_SELECT + ' ORDER BY COALESCE(m.row_no, 1e9), m.seq').filter(r => want.has(r.trainer));
+  }
   return trainer ? db.all(CLAIMED_SELECT + ' AND m.trainer = ? ORDER BY COALESCE(m.row_no, 1e9), m.seq', trainer)
     : db.all(CLAIMED_SELECT + ' ORDER BY COALESCE(m.row_no, 1e9), m.seq');
 }
@@ -53,6 +57,12 @@ export function org() {
   return { rows: db.all('SELECT trainer, manager, mentor FROM in_org ORDER BY seq'), names };
 }
 
+/** A trainer's display name. */
+export function nameOf(email) {
+  const r = db.get('SELECT name FROM in_names WHERE email = ?', email);
+  return r ? r.name : prettyName(email);
+}
+
 export function session(email) {
   return resolveSession(norm(email), org(), CONFIG.HEAD_EMAILS, CONFIG.ADMIN_EMAILS);
 }
@@ -62,6 +72,27 @@ export function assertTrainer(s, email) {
   const target = norm(email);
   if (!s.trainers.some(t => t.email === target)) throw new UserError('You do not have access to this trainer.', 403);
   return target;
+}
+
+export const ALL = 'all';
+/**
+ * What a page asked for: one trainer, or ALL (every trainer this person may open, as managers see by default).
+ * Returns { key: what the page sent back ('all' or the e-mail), list: [trainer e-mails] }.
+ */
+export function scope(s, trainer) {
+  if (norm(trainer) === ALL) {
+    if (!s.trainers.length) throw new UserError('You do not have access.', 403);
+    return { key: ALL, list: s.trainers.map(t => t.email) };
+  }
+  const t = assertTrainer(s, trainer);
+  return { key: t, list: [t] };
+}
+
+/** The trainer a claimed trainee sits under, if this session may open them (for saves made from the All view). */
+export function trainerOf(s, empId) {
+  const r = db.get('SELECT trainer FROM in_master WHERE emp_id = ? ORDER BY seq LIMIT 1', normId(empId));
+  if (!r || !s.trainers.some(t => t.email === r.trainer)) throw new UserError(normId(empId) + ' is not under a trainer you can open.', 403);
+  return r.trainer;
 }
 
 export function departments() {

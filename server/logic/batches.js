@@ -9,11 +9,12 @@ import { addDaysIso, dayNumber } from '../dates.js';
 
 /** All batches for one trainer, numbered from the trainer's first one. */
 export function buildTrainerView(master, trainerEmail, today, mergeDays) {
+  const want = new Set([].concat(trainerEmail));          // one trainer, or a list for the All view
   const people = [];
   master.forEach(row => {
-    if (!row.empId || row.trainer !== trainerEmail) return;
+    if (!row.empId || !want.has(row.trainer)) return;
     people.push({
-      empId: row.empId, name: row.name, mode: row.mode, dept: row.department, subTeam: row.subTeam, location: row.location,
+      empId: row.empId, name: row.name, trainer: row.trainer, mode: row.mode, dept: row.department, subTeam: row.subTeam, location: row.location,
       active: norm(row.status) === 'active', lateral: norm(row.lateral) === 'yes',
       doj: row.doj, trainingStart: row.trainingStart, trainingEnd: row.trainingEnd, trainingDays: row.trainingDays,
       kcScore: row.kcScore, kcAttempt: row.kcAttempt, kcStatus: row.kcStatus,
@@ -40,7 +41,21 @@ export function buildTrainerView(master, trainerEmail, today, mergeDays) {
     u.name = 'No start date';
     batches.push(u);
   }
-  return { trainer: trainerEmail, today, batches };
+  return { trainer: Array.isArray(trainerEmail) ? 'all' : trainerEmail, today, batches };
+}
+
+/**
+ * One trainer's view, or for a list of trainers (the All trainers view) each trainer's batches side by side:
+ * numbered per trainer as on their own page, labelled "Batch 3 · Aditi Rao", newest first by start date.
+ */
+export function buildScopedView(master, trainers, today, mergeDays, nameOf) {
+  if (!Array.isArray(trainers)) return buildTrainerView(master, trainers, today, mergeDays);
+  const batches = [];
+  trainers.forEach(t => buildTrainerView(master, t, today, mergeDays).batches.forEach(b => {
+    batches.push(Object.assign(b, { key: t + '|' + b.key, name: b.name + ' · ' + nameOf(t), trainer: t }));
+  }));
+  batches.sort((a, b) => (!a.start ? 1 : !b.start ? -1 : a.start < b.start ? -1 : a.start > b.start ? 1 : a.name.localeCompare(b.name)));
+  return { trainer: 'all', today, batches };
 }
 
 function summariseBatch(g, number, today) {
@@ -81,7 +96,7 @@ function summariseBatch(g, number, today) {
 export function rosterFromView(view) {
   const out = [];
   view.batches.forEach(b => b.trainees.forEach(p => out.push({
-    empId: p.empId, name: p.name, mode: p.mode, subTeam: p.subTeam || p.dept, doj: p.doj,
+    empId: p.empId, name: p.name, trainer: p.trainer, mode: p.mode, subTeam: p.subTeam || p.dept, doj: p.doj,
     trainingEnd: p.trainingEnd, ojtStart: p.ojtStart, ojtEnd: p.ojtEnd, lastWorkingDate: p.lastWorkingDate, active: p.active,
     batch: b.name, batchKey: b.key, batchStart: b.start
   })));
@@ -122,13 +137,14 @@ export function nhtStage(row, stage) {
 
 /** Active NHT Details for one trainer: active, no last working date, and not yet moved to OJT. Newest DOJ first. */
 export function buildNhtList(master, trainerEmail, batchOf, stage) {
+  const want = new Set([].concat(trainerEmail));
   const out = [];
   master.forEach(row => {
-    if (!row.empId || row.trainer !== trainerEmail) return;
+    if (!row.empId || !want.has(row.trainer)) return;
     if (norm(row.status) !== 'active' || row.lwd || nhtStage(row, stage) !== 'nht') return;
     const b = (batchOf && batchOf[row.empId]) || {};
     out.push({
-      empId: row.empId, name: row.name, doj: row.doj, mode: row.mode, email: row.email, phone: row.phone,
+      empId: row.empId, name: row.name, trainer: row.trainer, doj: row.doj, mode: row.mode, email: row.email, phone: row.phone,
       department: row.department, subTeam: row.subTeam, trainingStart: row.trainingStart,
       batch: b.name || '', batchKey: b.key || '', batchStart: b.start || ''
     });

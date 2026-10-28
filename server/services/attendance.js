@@ -6,14 +6,14 @@ import * as db from '../db.js';
 import * as data from '../data.js';
 import { CONFIG } from '../config.js';
 import { today, prettyDate } from '../dates.js';
-import { buildTrainerView, rosterFromView, applyTracking } from '../logic/batches.js';
+import { buildScopedView, rosterFromView, applyTracking } from '../logic/batches.js';
 import { planAttendanceSave, codeLabel } from '../logic/attendance.js';
 import { normId } from '../logic/common.js';
 import { saveChange } from './changes.js';
 
-/** The trainer's trainees with OJT dates and the last day attendance is tracked. */
+/** The trainees of one trainer (or a list of trainers) with OJT dates and the last day attendance is tracked. */
 export function trackedTrainees(target) {
-  const view = buildTrainerView(data.masterRows(target), target, today(), CONFIG.BATCH_MERGE_DAYS);
+  const view = buildScopedView(data.masterRows(target), target, today(), CONFIG.BATCH_MERGE_DAYS, data.nameOf);
   return applyTracking(rosterFromView(view), data.ojtDates(), CONFIG.ATTENDANCE_FALLBACK_DAYS);
 }
 
@@ -28,10 +28,10 @@ function marksFor(ids) {
 /** The open trainer's trainees and every mark already saved for them. */
 export function getAttendance(user, trainer) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, trainer);
-  const trainees = trackedTrainees(target);
+  const sc = data.scope(s, trainer);
+  const trainees = trackedTrainees(sc.key === data.ALL ? sc.list : sc.key);
   return {
-    trainer: target, today: today(), codes: CONFIG.ATTENDANCE_CODES, trainees,
+    trainer: sc.key, today: today(), codes: CONFIG.ATTENDANCE_CODES, trainees,
     ojtSheetFound: !!data.ojtDates(), fallbackDays: CONFIG.ATTENDANCE_FALLBACK_DAYS,
     marks: marksFor(trainees.map(t => t.empId))
   };
@@ -50,12 +50,12 @@ export function writeMarks(by, target, ok, byId) {
       if (e.code) {
         db.run(`INSERT INTO attendance (emp_id, date, code, trainer, name, doj, marked_by, marked_on) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(emp_id, date) DO UPDATE SET code = excluded.code, trainer = excluded.trainer, marked_by = excluded.marked_by, marked_on = excluded.marked_on`,
-          e.empId, e.date, e.code, target, t.name || '', t.doj || '', by, now);
+          e.empId, e.date, e.code, t.trainer || target, t.name || '', t.doj || '', by, now);
       } else {
         db.run('DELETE FROM attendance WHERE emp_id = ? AND date = ?', e.empId, e.date);
       }
       db.run('INSERT INTO attendance_log (changed_on, changed_by, trainer, emp_id, date, old_code, new_code) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        now, by, target, e.empId, e.date, old, e.code);
+        now, by, t.trainer || target, e.empId, e.date, old, e.code);
       changed++;
     });
     if (changed) db.markDirty('Attendance', 'Attendance Log');
@@ -69,9 +69,9 @@ export function writeMarks(by, target, ok, byId) {
  */
 export function saveAttendance(user, req) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, req && req.trainer);
+  const sc = data.scope(s, req && req.trainer), target = sc.key;      // 'all': each mark goes to its trainee's trainer
   const day = today(), byId = {};
-  trackedTrainees(target).forEach(t => { byId[t.empId] = t; });
+  trackedTrainees(sc.key === data.ALL ? sc.list : sc.key).forEach(t => { byId[t.empId] = t; });
   const days = req.days || [];
 
   if (s.isAdmin) {
@@ -108,7 +108,7 @@ export function saveAttendance(user, req) {
   cplan.ok.forEach(e => {
     const old = (saved[e.empId] || {})[e.date] || '';
     const checked = { first: false, value: { date: e.date, code: e.code }, oldText: codeLabel(old) + ' on ' + prettyDate(e.date), newText: codeLabel(e.code) + ' on ' + prettyDate(e.date) };
-    const r = saveChange(s, target, e.empId, (byId[e.empId] || {}).name || e.empId, 'Attendance ' + e.date, checked);
+    const r = saveChange(s, (byId[e.empId] || {}).trainer || target, e.empId, (byId[e.empId] || {}).name || e.empId, 'Attendance ' + e.date, checked);
     res.pending.push({ empId: e.empId, date: e.date, code: e.code, requestId: r.requestId || '' });
   });
   return res;

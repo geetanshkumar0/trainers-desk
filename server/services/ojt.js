@@ -10,20 +10,21 @@ import { syncDumps, syncTracker } from '../sync.js';
 
 const log = (...a) => console.log(new Date().toISOString(), '[ojt]', ...a);
 
-/** OJT dashboard rows for one trainer. */
+/** OJT dashboard rows for one trainer (or a list of trainers). */
 export function parseOjtRows(trainer, day, isAdmin) {
   const any = db.get('SELECT updated_on FROM ojt_dashboard ORDER BY seq LIMIT 1');
-  const rows = db.all('SELECT * FROM ojt_dashboard WHERE trainer = ? ORDER BY seq', trainer).map(v => ({
-    empId: v.emp_id, name: v.name, mode: v.work_mode, doj: v.doj, trainingEnd: v.training_end, ojtStart: v.ojt_start, ojtEnd: v.ojt_end,
+  const want = new Set([].concat(trainer));
+  const rows = db.all('SELECT * FROM ojt_dashboard ORDER BY seq').filter(v => want.has(v.trainer)).map(v => ({
+    empId: v.emp_id, name: v.name, trainer: v.trainer, mode: v.work_mode, doj: v.doj, trainingEnd: v.training_end, ojtStart: v.ojt_start, ojtEnd: v.ojt_end,
     status: v.status, ojtDay: v.ojt_day, talkDays: v.talk_days, talkHours: v.talk_hours, lastTalk: v.last_talk,
     team: v.team, teamSet: !!v.team_set, achievement: v.achievement, score: v.score, result: v.result, passRule: v.pass_rule, note: v.note
   }));
-  return { trainer, today: day, updatedOn: any ? any.updated_on : '', sheetFound: !!any, isAdmin: !!isAdmin, rows };
+  return { trainer: Array.isArray(trainer) ? data.ALL : trainer, today: day, updatedOn: any ? any.updated_on : '', sheetFound: !!any, isAdmin: !!isAdmin, rows };
 }
 
 export function getOjtSummary(user, trainer) {
   const s = data.session(user);
-  const target = data.assertTrainer(s, trainer);
+  const sc = data.scope(s, trainer), target = sc.key === data.ALL ? sc.list : sc.key;
   if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = null; buildOjtDashboard(); }   // someone just moved to OJT
   const view = parseOjtRows(target, today(), s.isAdmin);
   const ids = view.rows.map(r => r.empId);

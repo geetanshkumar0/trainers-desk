@@ -251,6 +251,30 @@ test('the OJT refresh reads Talktime and the dumps from Google', async () => {
   await assert.rejects(ojt.refreshOjtDashboard(TR), /Only admins/);
 });
 
+test('managers see All trainers: every trainer they manage, and saves still go to each trainee\'s own trainer', () => {
+  const K = 'karthik.menon@nobroker.in';
+  const ids = v => v.batches.flatMap(b => b.trainees.map(t => t.empId)).sort();
+  const all = cand.getTrainerBatches(ADMIN, 'all');
+  assert.equal(all.trainer, 'all');
+  assert.deepEqual(ids(all), [...ids(cand.getTrainerBatches(ADMIN, TR)), ...ids(cand.getTrainerBatches(ADMIN, K))].sort());
+  const att = attendance.getAttendance(ADMIN, 'all');
+  assert.ok(att.trainees.some(t => t.trainer === TR) && att.trainees.some(t => t.trainer === K));
+  assert.equal(changes.getNhtCandidates(ADMIN, 'all').candidates.length,
+    changes.getNhtCandidates(ADMIN, TR).candidates.length + changes.getNhtCandidates(ADMIN, K).candidates.length);
+  assert.ok(ojt.getOjtSummary(ADMIN, 'all').rows.length >= ojt.getOjtSummary(ADMIN, TR).rows.length);
+  // A mark and a department saved from the All view land under the trainee's own trainer.
+  const k = att.trainees.find(t => t.trainer === K && t.doj <= today() && t.trackUntil >= today());
+  attendance.saveAttendance(ADMIN, { trainer: 'all', days: [{ date: today(), marks: { [k.empId]: 'P' } }] });
+  assert.equal(db.get('SELECT trainer FROM attendance WHERE emp_id = ? AND date = ?', k.empId, today()).trainer, K);
+  const c = changes.getNhtCandidates(ADMIN, 'all').candidates.find(x => x.trainer === K);
+  const r = changes.submitChange(ADMIN, { trainer: 'all', empId: c.empId, field: 'Department', value: { department: 'Tenant Servicing', subTeam: 'TS/TSRP' } });
+  assert.equal(r.status, 'applied');
+  assert.equal(db.get('SELECT trainer FROM change_requests WHERE emp_id = ? ORDER BY seq DESC', c.empId).trainer, K);
+  // A trainer cannot use All to reach someone else's trainees.
+  assert.deepEqual(cand.getTrainerBatches(TR, 'all').batches.flatMap(b => b.trainees).filter(t => t.trainer !== TR), []);
+  assert.throws(() => changes.submitChange(TR, { trainer: 'all', empId: c.empId, field: 'Department', value: { department: 'PIA', subTeam: '' } }), /not under a trainer you can open/);
+});
+
 test('trainers cannot open other trainers or approve', () => {
   assert.throws(() => cand.getTrainerBatches(TR, 'karthik.menon@nobroker.in'), /do not have access/);
   assert.throws(() => changes.reviewRequests(TR, { ids: [], decision: 'Approved' }), /Only admins/);
