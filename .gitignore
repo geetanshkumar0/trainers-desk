@@ -1,0 +1,12 @@
+# secrets and live data: never commit
+.env
+.env.*
+!.env.example
+data/
+backups/
+preview/.data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+node_modules/

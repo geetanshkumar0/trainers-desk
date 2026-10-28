@@ -1,0 +1,22 @@
+name: desk
+services:
+  desk:
+    image: node:22-alpine            # Node.js 22.13 or newer (built-in SQLite)
+    container_name: trainer-desk
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "--disable-warning=ExperimentalWarning", "server/main.js"]
+    env_file: .env
+    environment:
+      - DATA_DIR=/data                # the SQLite database lives here: back this folder up
+      - BOT_TOKEN_FILE=/bot/google_token.json
+      - PORT=8095
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./:/app:ro
+      - ./data:/data
+      - /root/bot:/bot:ro             # Gmail token used to send approval e-mails
+    ports:
+      - "127.0.0.1:8095:8095"
+    mem_limit: 1536m
+    cpus: 2.0

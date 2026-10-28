@@ -1,0 +1,13 @@
+{
+  "name": "trainer-desk",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Trainer Desk: batches, attendance, NHT and OJT tracking for the T&D team.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/main.js",
+    "preview": "node --disable-warning=ExperimentalWarning preview/start.js",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js"
+  }
+}

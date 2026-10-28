@@ -1,0 +1,172 @@
+/**
+ * Trainer Desk server. Node.js 22.13+ (built-in SQLite), no dependencies.
+ *   /                    the page (public/index.html)
+ *   /api/...             the REST API (routes.js)
+ *   /auth/*              Google sign-in, company accounts only
+ *   /admin/connect       connects the Google account that reads and writes the sheets (setup admins, once)
+ *   /admin/status        sync, outbox and mirror status (setup admins)
+ *   /healthz             liveness
+ */
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CONFIG, SERVER } from './config.js';
+import * as db from './db.js';
+import * as G from './google.js';
+import * as auth from './auth.js';
+import * as sync from './sync.js';
+import * as outbox from './outbox.js';
+import * as mirror from './mirror.js';
+import * as ojt from './services/ojt.js';
+import { MODE as WA_MODE } from './services/whatsapp.js';
+import routes from './routes.js';
+import { isoDay } from './dates.js';
+import { send, json, redirect, html, esc, serveStatic } from './web.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC = path.join(HERE, '..', 'public');
+const BASE = SERVER.base;
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+
+function page(title, body) {
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) +
+    ' · Trainer Desk</title><style>body{font-family:system-ui,sans-serif;background:#0b1020;color:#e7ecf7;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}' +
+    'main{max-width:460px;padding:32px;border-radius:18px;background:#141a30;box-shadow:0 20px 60px #0008}a{color:#8fb4ff}h1{font-size:22px;margin:0 0 12px}</style></head><body><main><h1>' +
+    esc(title) + '</h1>' + body + '</main></body></html>';
+}
+
+function status() {
+  const s = sync.syncState;
+  return {
+    database: SERVER.dbFile, demo: SERVER.demo, sheetsAccount: G.sheetsAccount(), sheetsConnected: G.sheetsConnected(),
+    sync: { lastOk: s.lastOk, lastError: s.lastError, lastMs: s.lastMs, inputs: db.all('SELECT * FROM sync_status ORDER BY name') },
+    outbox: outbox.status(),
+    mirror: { on: SERVER.mirror, waiting: db.all('SELECT tab, since FROM mirror_dirty') },
+    ojtRefreshed: db.getMeta('ojt_refreshed', null), importedFromSheets: db.getMeta('imported_from_sheets', null),
+    whatsapp: WA_MODE, mail: { configured: G.mailConfigured(), to: SERVER.mailTo || null, override: SERVER.mailOverride || null }
+  };
+}
+
+async function handle(req, res) {
+  const url = new URL(req.url, SERVER.origin);
+  const p = url.pathname;
+  if (BASE && p === BASE) return redirect(res, BASE + '/');
+  if (!p.startsWith(BASE + '/')) return send(res, 404, 'Not found');
+  const sub = p.slice(BASE.length);
+
+  if (sub === '/healthz') return json(res, 200, { ok: !!db.get('SELECT 1 FROM sync_status WHERE name = ?', CONFIG.MASTER_SHEET) });
+
+  /* ---- sign-in ---- */
+  if (sub === '/auth/login') return redirect(res, SERVER.demo ? BASE + '/' : auth.authUrl('login', url.searchParams.get('next')));
+  if (sub === '/auth/logout') return redirect(res, BASE + '/auth/login', { 'Set-Cookie': auth.clearCookie() });
+  if (sub === '/auth/callback') {
+    try {
+      const done = await auth.finish(url);
+      if (done.kind === 'connect') {
+        const me = auth.userOf(req);
+        if (!SERVER.setupAdmins.includes(me)) return html(res, 403, page('Not allowed', '<p>Only setup admins can connect the sheets account.</p>'));
+        if (!done.refreshToken) return html(res, 400, page('Try again', '<p>Google did not return a long-lived token. <a href="' + BASE + '/admin/connect">Connect again</a>.</p>'));
+        G.saveSheetsToken(done.refreshToken, done.email, 'google');
+        log('sheets account connected:', done.email, 'by', me);
+        sync.syncTracker('account connected').catch(() => null);
+        return html(res, 200, page('Connected', '<p>The sheets are now read and saved as <b>' + esc(done.email) + '</b>.</p><p><a href="' + BASE + '/admin/status">Status</a> · <a href="' + BASE + '/">Open Trainer Desk</a></p>'));
+      }
+      log('sign-in:', done.email);
+      return redirect(res, done.next, { 'Set-Cookie': auth.sessionCookie(done.email) });
+    } catch (e) {
+      if (e.forbidden) return html(res, 403, page('Not allowed', '<p>' + esc(e.message) + '</p>'));
+      // A reloaded sign-in link: Google's one-time code is already spent. Carry on if already signed in.
+      log('sign-in callback failed:', e.message);
+      return redirect(res, auth.userOf(req) ? BASE + '/' : BASE + '/auth/login');
+    }
+  }
+
+  /* ---- static files ---- */
+  if (/^\/(css|js|vendor)\//.test(sub) || sub === '/favicon.svg') {
+    return serveStatic(res, PUBLIC, sub, 3600) || send(res, 404, 'Not found');
+  }
+
+  const user = auth.userOf(req);
+
+  /* ---- API ---- */
+  if (sub.startsWith('/api/')) {
+    if (!user) return json(res, 401, { error: 'Please sign in again.', login: true });
+    // Until the existing tabs have been brought into the database, nothing may be saved over them.
+    if (req.method === 'POST' && !SERVER.demo && !db.getMeta('imported_from_sheets', null)) return json(res, 503, { error: 'Trainer Desk is starting up. Try again in a minute.' });
+    if (req.method === 'POST' && !/^application\/json/.test(req.headers['content-type'] || '')) return json(res, 415, { error: 'Send JSON.' });
+    const m = routes.match(req.method, sub);
+    if (!m) return json(res, 404, { error: 'Unknown address ' + sub });
+    if (m.wrongMethod) return json(res, 405, { error: 'Method not allowed' });
+    const t0 = Date.now();
+    try {
+      const out = await m.handler({ req, res, params: m.params, query: url.searchParams, user });
+      log('[api]', user, req.method, sub, (Date.now() - t0) + 'ms');
+      return json(res, 200, out);
+    } catch (e) {
+      const code = e.status || (e instanceof TypeError || e instanceof ReferenceError ? 500 : 400);
+      log('[api]', user, req.method, sub, 'ERROR', code, code === 500 ? e.stack : e.message);
+      return json(res, code, { error: code === 500 ? 'Something went wrong on the server.' : e.message });
+    }
+  }
+
+  /* ---- admin ---- */
+  if (sub === '/admin/connect' || sub === '/admin/status' || sub === '/admin/sync') {
+    if (!user) return redirect(res, BASE + '/auth/login?next=' + encodeURIComponent(p));
+    if (!SERVER.setupAdmins.includes(user) && !SERVER.demo) return html(res, 403, page('Not allowed', '<p>Only setup admins can open this page.</p>'));
+    if (sub === '/admin/connect') return redirect(res, auth.authUrl('connect', BASE + '/admin/status', SERVER.sheetsAccountHint));
+    if (sub === '/admin/sync') { await sync.syncTracker('admin').catch(() => null); await mirror.mirrorNow().catch(() => null); return redirect(res, BASE + '/admin/status'); }
+    return json(res, 200, status());
+  }
+
+  /* ---- the page ---- */
+  if (sub === '/' || sub === '/index.html') {
+    if (!user) return redirect(res, BASE + '/auth/login');
+    let page = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+    if (SERVER.demo) page = page.replace('<html lang="en">', '<html lang="en" data-preview>');
+    return html(res, 200, page);
+  }
+  return send(res, 404, 'Not found');
+}
+
+/** A copy of the database every night (and at start if today's is missing); the last 14 are kept in DATA_DIR/backups. */
+function startBackups() {
+  const dir = path.join(SERVER.dataDir, 'backups');
+  const run = () => {
+    const day = isoDay(), file = path.join(dir, 'trainer-desk-' + day + '.db');
+    if (fs.existsSync(file)) return;
+    try {
+      db.backup(file);
+      fs.readdirSync(dir).filter(f => /^trainer-desk-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0, -14).forEach(f => fs.unlinkSync(path.join(dir, f)));
+      log('[backup] saved', file);
+    } catch (e) { log('[backup] failed:', e.message); }
+  };
+  run();
+  return setInterval(run, 3600000);
+}
+
+export function startServer() {
+  db.open(SERVER.dbFile);
+  if (G.adoptOldTokenFile(path.join(SERVER.dataDir, 'sheets_token.json'))) log('sheets token brought over from sheets_token.json');
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch(e => { log('ERROR', req.url, e.stack || e.message); if (!res.headersSent) send(res, 500, 'Server error'); });
+  });
+  server.listen(SERVER.port, () => log('Trainer Desk on :' + SERVER.port + ' at ' + SERVER.origin + BASE + '/' + (SERVER.demo ? ' (local preview, made-up data)' : '')));
+  outbox.start();
+  if (!SERVER.demo) {
+    // First start: read the old app tabs into SQLite (retried until it works), then start the mirror.
+    const settle = async () => {
+      try { await mirror.importFromSheets(); mirror.start(); }
+      catch (e) { log('[import] the old tabs could not be read yet:', e.message, '- trying again in 60 s'); setTimeout(settle, 60000); }
+    };
+    sync.start(SERVER.refreshSeconds).then(settle);
+    ojt.startDaily();
+    startBackups();
+  }
+  const stop = () => { log('stopping'); server.close(); sync.stop(); outbox.stop(); mirror.stop(); db.close(); process.exit(0); };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  return server;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) startServer();
