@@ -63,20 +63,31 @@ export const TABS = {
     .concat(db.all('SELECT * FROM whatsapp_log ORDER BY id').map(r => [when(r.sent_on), r.trainer, r.emp_id, r.candidate, r.candidate_phone, r.sent_to, r.template, r.status, r.detail]))
 };
 
-/** Writes one tab: creates it if needed, clears it, writes the grid in chunks. */
+const colLetter = c => { let s = ''; while (c > 0) { const m = (c - 1) % 26; s = String.fromCharCode(65 + m) + s; c = Math.floor((c - 1) / 26); } return s; };
+
+/**
+ * Writes one tab: creates it if needed, writes the grid over what is there (rows are added or changed in place),
+ * then blanks whatever is left below or to the right of it. The tab is never emptied first, so nobody sees it blank.
+ */
 async function writeTab(meta, name, grid) {
-  const id = CONFIG.TRACKER_ID;
-  if (!meta.sheets.some(s => s.properties.title === name)) {
-    await G.sheetsBatchUpdate(id, [{ addSheet: { properties: { title: name, gridProperties: { frozenRowCount: 1, rowCount: Math.max(grid.length + 50, 100), columnCount: Math.max(grid[0].length, 26) } } } }]);
+  const id = CONFIG.TRACKER_ID, tab = G.quoteTab(name);
+  const width = Math.max(...grid.map(r => r.length));
+  const rows = grid.map(r => { const a = r.map(v => (v === null || v === undefined ? '' : v)); while (a.length < width) a.push(''); return a; });
+  let p = (meta.sheets.find(s => s.properties.title === name) || {}).properties;
+  if (!p) {
+    await G.sheetsBatchUpdate(id, [{ addSheet: { properties: { title: name, gridProperties: { frozenRowCount: 1, rowCount: Math.max(rows.length + 50, 100), columnCount: Math.max(width, 26) } } } }]);
   } else {
-    const p = meta.sheets.find(s => s.properties.title === name).properties, need = [];
-    if (p.gridProperties.rowCount < grid.length) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'ROWS', length: grid.length - p.gridProperties.rowCount + 50 } });
-    if (p.gridProperties.columnCount < grid[0].length) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'COLUMNS', length: grid[0].length - p.gridProperties.columnCount } });
-    if (need.length) await G.sheetsBatchUpdate(id, need);
-    await G.sheetsClear(id, [G.quoteTab(name)]);
+    const need = [];
+    if (p.gridProperties.rowCount < rows.length) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'ROWS', length: rows.length - p.gridProperties.rowCount + 50 } });
+    if (p.gridProperties.columnCount < width) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'COLUMNS', length: width - p.gridProperties.columnCount } });
+    if (need.length) { await G.sheetsBatchUpdate(id, need); meta.stale = true; }
   }
-  for (let i = 0; i < grid.length; i += 5000) {
-    await G.sheetsWrite(id, [{ range: G.quoteTab(name) + '!A' + (i + 1), values: grid.slice(i, i + 5000).map(r => r.map(v => (v === null || v === undefined ? '' : v))) }]);
+  for (let i = 0; i < rows.length; i += 5000) await G.sheetsWrite(id, [{ range: tab + '!A' + (i + 1), values: rows.slice(i, i + 5000) }]);
+  if (p) {
+    const maxR = Math.max(p.gridProperties.rowCount, rows.length), maxC = Math.max(p.gridProperties.columnCount, width), clear = [];
+    if (maxR > rows.length) clear.push(tab + '!A' + (rows.length + 1) + ':' + colLetter(maxC) + maxR);
+    if (maxC > width) clear.push(tab + '!' + colLetter(width + 1) + '1:' + colLetter(maxC) + rows.length);
+    if (clear.length) await G.sheetsClear(id, clear);
   }
 }
 
@@ -111,9 +122,25 @@ export async function mirrorNow() {
   }
 }
 
-let timer = null;
-export function start() { timer = setInterval(() => mirrorNow().catch(e => log(e.message)), SERVER.mirrorSeconds * 1000); }
-export function stop() { clearInterval(timer); }
+let timer = null, soon = null, started = false;
+/** Copies changes a few seconds after they are saved (several quick saves go out together). */
+function mirrorSoon() {
+  if (!started || soon || SERVER.demo || !SERVER.mirror) return;
+  soon = setTimeout(async () => {
+    soon = null;
+    let done = [];
+    try { done = await mirrorNow(); } catch (e) { log(e.message); }
+    // Changed again while copying: go again. If Google failed, the regular timer retries (no hammering).
+    if (done.length && db.isOpen() && db.get('SELECT 1 FROM mirror_dirty LIMIT 1')) mirrorSoon();
+  }, SERVER.mirrorDelaySeconds * 1000);
+}
+export function start() {
+  started = true;
+  db.onDirty(mirrorSoon);
+  timer = setInterval(() => mirrorNow().catch(e => log(e.message)), SERVER.mirrorSeconds * 1000);
+  mirrorSoon();
+}
+export function stop() { started = false; clearInterval(timer); clearTimeout(soon); }
 
 /* ------------------------------------------------------------------ */
 /* First start: bring the existing tabs into SQLite                     */

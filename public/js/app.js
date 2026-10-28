@@ -14,10 +14,10 @@
       blurb: 'New joiners in the HR sheets who are not mapped to a trainer yet. Select and assign them to yourself.' },
     { id: 'attendance', label: 'Attendance Tracker',          ready: true,
       blurb: 'Mark daily attendance for everyone in training, from their DOJ onwards.' },
-    { id: 'nht',        label: 'NHT Performance',             ready: true,
-      blurb: 'Everyone still in training (no mock date yet). Open a trainee to see their details and set their department.' },
-    { id: 'ojt',        label: 'OJT Summary',                 ready: true,
-      blurb: 'Trainees who cleared NHT: OJT start from their first call in Talktime, 30-day OJT window and talktime so far.' },
+    { id: 'nht',        label: 'Active NHT Details',          ready: true,
+      blurb: 'Everyone you claimed who is still in training. Open a trainee: set their department and sub-team first, then the rest.' },
+    { id: 'ojt',        label: 'OJT Performance',             ready: true,
+      blurb: 'Trainees marked OJT Entered and OJT Eligible: OJT start from their first call in Talktime, 30-day OJT window and talktime so far.' },
     { id: 'perfNew',    label: 'Performance Dashboard (New)', ready: true,
       blurb: 'The New Cal view: attrition by 15, 30 and 45 days completed, NHP from OJT results and NHT graduation, by month.' },
     { id: 'perfOld',    label: 'Performance Dashboard (Old)', ready: true,
@@ -240,10 +240,15 @@
       renderApp();
     }).catch(fail);
   }
-  function loadUnclaimed() {
-    state.unclaimed = null;
+  /** quiet: refresh in the background (new joiners from the HR sheets) without clearing the list first. */
+  function loadUnclaimed(quiet) {
+    var before = quiet && state.unclaimed ? state.unclaimed.map(function (c) { return c.empId + (c.excluded ? '-' : ''); }).join() : null;
+    if (!quiet) state.unclaimed = null;
     call('getUnclaimedCandidates').then(function (list) {
-      state.unclaimed = list || [];
+      list = list || [];
+      if (quiet && before === list.map(function (c) { return c.empId + (c.excluded ? '-' : ''); }).join()) return;   // nothing new
+      if (quiet && (state.busy || /^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || ''))) return;   // try again next minute
+      state.unclaimed = list;
       var still = {};
       state.unclaimed.forEach(function (c) { if (state.picked[c.empId]) still[c.empId] = true; });
       state.picked = still;
@@ -813,12 +818,13 @@
     }
     state.nhtLoading = '';
     var all = state.nht.candidates, list = nhtMatches(), missing = all.filter(function (c) { return !c.department; }).length;
-    var html = '<div class="sub dim">Trainees still in training: active, not left, and no final mock in Master Dashboard yet. Open a card to see details, set the department and training start date, and record mocks.' +
+    var html = '<div class="sub dim">Everyone you claimed who is still in training. Open a card and set the department and sub-team first; then the training start date, mocks and OJT open. ' +
+      'When OJT Entered and OJT Eligible are both Yes, the trainee moves to OJT Performance.' +
       (state.nht.isAdmin ? '' : ' Your first update of a department or training start date saves straight away; changing it again goes to an admin for approval.') + '</div>' +
       '<div class="unclaimed-bar"><input class="search" id="nht-search" type="search" placeholder="Search by name, Emp ID or department" value="' + esc(state.nhtQuery) + '" aria-label="Search trainees">' +
       '<div class="filters"><button class="filter" data-nht-missing="0" aria-pressed="' + !state.nhtOnlyMissing + '">All<span class="num">' + all.length + '</span></button>' +
       '<button class="filter" data-nht-missing="1" aria-pressed="' + state.nhtOnlyMissing + '">Department not set<span class="num">' + missing + '</span></button></div></div>';
-    if (!all.length) return html + '<div class="empty">Nobody is in training right now. Candidates you claim appear here until their final mock is recorded.</div>';
+    if (!all.length) return html + '<div class="empty">Nobody is in training right now. Candidates you claim appear here until they move to OJT.</div>';
     if (!list.length) return html + '<div class="empty">No trainees match.</div>';
 
     var groups = {}, order = [];
@@ -869,6 +875,7 @@
     if (state.nhtDept && row && (state.nhtDept !== c.department || state.nhtSub !== c.subTeam) && (!row[1].length || state.nhtSub)) {
       out.push({ field: 'Department', value: { department: state.nhtDept, subTeam: state.nhtSub }, label: 'Department: ' + state.nhtDept + (state.nhtSub ? ' / ' + state.nhtSub : '') });
     }
+    if (!state.nhtDept || !row || (row[1].length && !state.nhtSub)) return out.map(function (x) { x.approval = !admin && !!done[x.field]; return x; });
     if (state.nhtTs && state.nhtTs !== c.trainingStart) out.push({ field: 'Training Start Date', value: { date: state.nhtTs }, label: 'Training start: ' + day(state.nhtTs) });
     var f = state.nhtMock || {};
     if (c.kc && f.status && f.date) {
@@ -915,6 +922,11 @@
       (c.trainingStart ? '<span class="dim small">Saved: ' + esc(weekday(c.trainingStart) + ' ' + day(c.trainingStart)) + '</span>' : '<span class="dim small">Not set yet</span>') + '</div>' +
       approvalNote('Training Start Date');
 
+    var deptReady = !!state.nhtDept && !!row && (!row[1].length || !!state.nhtSub);
+    var deptFirst = function (title) {
+      return '<section class="dsec locked"><div class="dsec-head"><h3>' + esc(title) + '</h3><span class="pill done">Locked</span></div>' +
+        '<p class="dim small">Pick the department and sub-team first.</p></section>';
+    };
     var k = c.kc;
     var kcBody = k
       ? '<dl class="facts compact">' + field('Score', k.score !== null && k.score !== '' ? Math.round(k.score * 10) / 10 + '%' : '–', 'num') + field('Attempt', k.attempt) +
@@ -950,10 +962,10 @@
         (f.status ? '<button class="link-btn" id="mk-clear">Clear</button>' : '') +
       '</div>' +
       (f.status === 'Fail' ? '<label class="check-line"><input type="checkbox" id="mk-final"' + (f.final ? ' checked' : '') + '> Final attempt, no retake (this ends training)</label>'
-        : f.status === 'Pass' ? '<p class="dim small">A pass is the final mock: once saved, it fills Master Dashboard and the trainee leaves this list. Answer OJT below before you save.</p>' : '');
+        : f.status === 'Pass' ? '<p class="dim small">A pass is the final mock: once saved, it fills Master Dashboard. The trainee stays here until OJT Entered and OJT Eligible are both Yes.</p>' : '');
 
     var ojtOpen = !!k && (mocks.length > 0 || !!f.status);
-    var ojtBody = ['OJT Entered', 'OJT Eligible'].map(function (fld) {
+    var ojtBody = '<p class="dim small">When both are Yes, the trainee moves to OJT Performance.</p>' + ['OJT Entered', 'OJT Eligible'].map(function (fld) {
       var saved = fld === 'OJT Entered' ? c.ojtEntered : c.ojtEligible, pick = state.nhtOjt[fld] || saved || '';
       return '<div class="yn-row"><span class="yn-label">' + esc(fld) + '</span>' +
         '<div class="seg" role="group" aria-label="' + esc(fld) + '">' + ['Yes', 'No'].map(function (a) {
@@ -979,10 +991,10 @@
       '<dl class="facts">' + field('DOJ', day(c.doj), 'num') + field('Work Mode', c.mode) + field('Emp ID', c.empId, 'num') +
         field('Employee Name', c.name) + field('Official Email ID', c.email, 'wrap') + field('Contact Number', c.phone, 'num') + '</dl>' +
       nhtSection('Department', 'Department', deptBody, c) +
-      nhtSection('Training start date', 'Training Start Date', tsBody, c) +
+      (deptReady ? nhtSection('Training start date', 'Training Start Date', tsBody, c) : deptFirst('Training start date')) +
       '<section class="dsec"><div class="dsec-head"><h3>KC</h3><span class="dim small">Latest entry in the KC Sheet</span></div>' + kcBody + '</section>' +
-      (k ? nhtSection('Mock', 'Mock', mockBody, c, ['Mock Edit']) : lockedSection('Mock')) +
-      (ojtOpen ? nhtSection('OJT', 'OJT Entered', ojtBody, c, ['OJT Eligible'])
+      (!deptReady ? deptFirst('Mock') : k ? nhtSection('Mock', 'Mock', mockBody, c, ['Mock Edit']) : lockedSection('Mock')) +
+      (!deptReady ? deptFirst('OJT') : ojtOpen ? nhtSection('OJT', 'OJT Entered', ojtBody, c, ['OJT Eligible'])
         : '<section class="dsec locked"><div class="dsec-head"><h3>OJT</h3><span class="pill done">Locked</span></div><p class="dim small">' +
           (k ? 'Opens once a mock is recorded, or filled in above.' : 'Opens once this trainee has a KC result and a mock.') + '</p></section>') +
       footer +
@@ -1039,11 +1051,11 @@
           if (r.field === 'OJT Eligible') c.ojtEligible = value.answer;
           if (r.field === 'Mock Edit') {
             (c.mocks || []).forEach(function (m) { if (attemptNumber(m.attempt) === value.attempt) { m.date = value.date; m.status = value.status; m.final = value.status === 'Pass' || value.final; } });
-            if (value.status === 'Pass' || value.final) left = value;
+            if (value.status === 'Fail' && value.final) left = value;
           }
           if (r.field === 'Mock') {
             (c.mocks = c.mocks || []).push({ date: value.date, attempt: ordinal(value.attempt), score: '', status: value.status, final: value.final });
-            if (value.final) left = value;
+            if (value.status === 'Fail' && value.final) left = value;          // a final Fail ends training
           }
           (c.updated = c.updated || {})[r.field] = true;
         }
@@ -1055,9 +1067,13 @@
         }
       });
       if (state.session.isAdmin) loadApprovals();
-      if (left && !bad) {
+      var toOjt = c.ojtEntered === 'Yes' && c.ojtEligible === 'Yes';
+      if ((left || toOjt) && !bad) {
         state.nht.candidates = state.nht.candidates.filter(function (x) { return x !== c; });
-        state.notice = { tone: 'good', text: c.name + ' finished training (' + left.status + ' on the ' + ordinal(left.attempt) + ' attempt) and has left this list.', items: [] };
+        state.notice = { tone: 'good', items: [], text: toOjt
+          ? c.name + ' is marked OJT Entered and OJT Eligible, and has moved to OJT Performance.'
+          : c.name + ' finished training (' + left.status + ' on the ' + ordinal(left.attempt) + ' attempt) and has left this list.' };
+        if (toOjt) state.ojtView = null;                     // OJT Performance reloads with them in it
         state.nhtOpen = ''; keepScroll(renderApp); return;
       }
       state.nhtMsg._save = { tone: bad ? 'warn' : 'good', text: [okN ? okN + ' saved' : '', pendN ? pendN + ' sent for approval' : '', bad ? bad + ' not saved (see the messages above)' : ''].filter(String).join(' · ') + '.' };
@@ -1240,7 +1256,7 @@
       }
       return '<div class="loading">Loading OJT…</div>';
     }
-    var html = '<div class="ojt-top"><p class="dim">Everyone who cleared NHT, with their 30-day OJT against their team\'s targets.</p>' +
+    var html = '<div class="ojt-top"><p class="dim">Everyone marked OJT Entered and OJT Eligible in Active NHT Details, with their 30-day OJT against their team\'s targets.</p>' +
       '<div class="ojt-refresh"><span class="dim small">' + (v.updatedOn ? 'Updated ' + esc(day(String(v.updatedOn).slice(0, 10))) : '') + '</span>' +
       (v.isAdmin ? '<button class="btn btn-sm" id="ojt-refresh"' + (state.busy ? ' disabled' : '') + '>' + (state.busy ? 'Refreshing…' : 'Refresh now') + '</button>' : '') + '</div></div>';
     if (!v.sheetFound) return html + '<div class="empty">OJT data has not been built yet. ' + (v.isAdmin ? 'Press "Refresh now" to build it.' : 'Ask an admin to refresh OJT data.') + '</div>';
@@ -1576,7 +1592,7 @@
     var html = '<section class="unclaimed">' +
       '<div class="sub dim">' + (removedView
         ? 'Removed by an admin because they are not in a team the training team handles. Trainers do not see these.'
-        : 'People in HR_WFO and HR_WFH who joined on or after 1 Feb 2026 and whose Emp ID is not in Master Dashboard') +
+        : 'People in HR_WFO and HR_WFH who joined' + (state.session.unclaimedFrom ? ' on or after ' + day(state.session.unclaimedFrom) : '') + ' and whose Emp ID is not in Master Dashboard. New joiners appear within a minute of being added to the HR sheets.') +
         (state.month ? ' · joined in ' + esc(monthName(state.month)) : '') + '</div>' +
       '<div class="unclaimed-bar">' +
         '<input class="search" id="search" type="search" placeholder="Search by name, Emp ID, department or location" value="' + esc(state.query) + '" aria-label="Search candidates">' +
@@ -1687,6 +1703,7 @@
         var id = el.getAttribute('data-tab');
         if (id === state.tab) return;
         state.tab = id; state.shown = PAGE; state.notice = null; state.picked = {};
+        if (id === 'unclaimed' || id === 'home') loadUnclaimed(true);       // pick up new joiners
         renderApp(); window.scrollTo(0, 0);
       };
     });
@@ -1906,6 +1923,11 @@
     on('dept', 'onchange', function () { state.dept = this.value; state.shown = PAGE; renderApp(); });
     on('pick-matching', 'onclick', function () { unclaimedMatches().forEach(function (c) { state.picked[c.empId] = true; }); renderApp(); });
   }
+
+  // New joiners reach the HR sheets all day; the server re-reads them every minute, so the open list does too.
+  setInterval(function () {
+    if (state.screen === 'app' && (state.tab === 'unclaimed' || state.tab === 'home') && !document.hidden) loadUnclaimed(true);
+  }, 60000);
 
   /* ---------- start ---------- */
   // The server has already signed the person in: go straight in; the card only stays for someone with no access.

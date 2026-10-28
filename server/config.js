@@ -54,7 +54,7 @@ export const CONFIG = {
     'PMS Sales': { score: 3.6 }, 'CPMS Servicing': { score: 3.6 }, 'PnM Sales': { score: 3.6 },
     '*': { achievement: 0.7 }
   },
-  UNCLAIMED_FROM: '2026-02-01',               // unclaimed list only shows people who joined on or after this date
+  UNCLAIMED_FROM: '2026-10-21',               // unclaimed list only shows people who joined on or after this date (DOJ after 20 Oct)
   MAX_ASSIGN: 200,
   MAX_EXCLUDE: 3000,
   BATCH_MERGE_DAYS: 0,
@@ -80,7 +80,8 @@ export const SERVER = {
   mailTo: (env.MAIL_TO || '').trim(),         // every e-mail goes here instead of ADMIN_EMAILS
   mailOverride: (env.MAIL_TO_OVERRIDE || '').trim(),
   refreshSeconds: Math.max(15, +(env.REFRESH_SECONDS || 60)),
-  mirrorSeconds: Math.max(60, +(env.MIRROR_SECONDS || 300)),
+  mirrorSeconds: Math.max(60, +(env.MIRROR_SECONDS || 300)),          // safety net: also try every few minutes
+  mirrorDelaySeconds: Math.max(1, +(env.MIRROR_DELAY_SECONDS || 5)),  // copy a change this many seconds after it is saved
   mirror: (env.SHEET_MIRROR || 'on').toLowerCase() !== 'off',   // copy app tabs back to the tracker for reporting
   demo: env.DEMO === '1',                     // local preview: made-up data, no Google, no sign-in
   demoUser: (env.DEMO_USER || 'priya.nair@nobroker.in').toLowerCase()

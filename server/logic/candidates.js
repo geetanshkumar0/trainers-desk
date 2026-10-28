@@ -5,7 +5,7 @@ import { norm } from './common.js';
  * hr: in_hr rows in sheet order ({ empId, name, status, doj, location, source, department }).
  * mapped / removed: Set of Emp IDs. excluded: { empId: { reason, by, on } }.
  * Admins also get excluded rows (flagged) so they can restore them; everyone else never sees them.
- * fromIso: people who joined before this date are left out ('' = no cut-off).
+ * fromIso: people who joined before this date, or have no DOJ, are left out ('' = no cut-off).
  */
 export function buildUnclaimed(hr, mapped, removed, excluded, isAdmin, fromIso) {
   const seen = new Set(), out = [];
@@ -14,7 +14,7 @@ export function buildUnclaimed(hr, mapped, removed, excluded, isAdmin, fromIso) 
     const id = row.empId;
     if (!id || mapped.has(id) || seen.has(id)) return;
     if (excluded[id] && !isAdmin) return;
-    if (fromIso && row.doj && row.doj < fromIso) return;
+    if (fromIso && (!row.doj || row.doj < fromIso)) return;      // joined before the cut-off, or no DOJ yet
     seen.add(id);
     out.push({
       empId: id, name: row.name,

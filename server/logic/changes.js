@@ -26,6 +26,11 @@ export function checkDepartment(list, dept, sub) {
   return row[1].includes(sub) ? '' : 'Pick a sub-team of ' + dept + '.';
 }
 
+/** True when the trainee's department (and sub-team, when it has any) is one from the Department List. */
+export function departmentReady(list, t) {
+  return !!t.department && !checkDepartment(list, t.department, t.subTeam || '');
+}
+
 /** OJT team key 'Department|Team' -> label shown to people. */
 export function teamLabel(k) {
   const p = String(k || '').split('|');
@@ -51,6 +56,10 @@ export function checkChange(field, value, ctx) {
     return { error: 'OJT opens once a mock is recorded for this trainee.' };
   }
   const updated = ctx.updated || {};
+  // Active NHT Details: the department and sub-team come first; nothing else saves until they are set.
+  if (['Training Start Date', 'Mock', 'Mock Edit', 'OJT Entered', 'OJT Eligible'].includes(field) && ctx.departments && !departmentReady(ctx.departments, t)) {
+    return { error: 'Pick the department and sub-team first.' };
+  }
 
   if (field === 'Department') {
     const d = String(value.department || '').trim(), s = String(value.subTeam || '').trim();

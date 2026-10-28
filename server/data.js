@@ -5,6 +5,7 @@ import { resolveSession } from './logic/org.js';
 import { departmentsFromRows, latestKc, kcKeys } from './logic/changes.js';
 import { parseOjtTargets } from './logic/ojt.js';
 import { normId, norm, UserError } from './logic/common.js';
+import { isoDay } from './dates.js';
 
 const MASTER_SELECT = `SELECT emp_id empId, trainer, manager, mentor, doj, work_mode mode, name, email, phone, department, sub_team subTeam,
   location, status, lateral, training_start trainingStart, kc_score kcScore, kc_attempt kcAttempt, kc_status kcStatus,
@@ -74,6 +75,22 @@ const reqShape = r => ({
 /** Change requests, oldest first. where: optional SQL condition. */
 export function requests(where, ...params) {
   return db.all('SELECT * FROM change_requests' + (where ? ' WHERE ' + where : '') + ' ORDER BY seq', ...params).map(reqShape);
+}
+
+/** What decides whether a trainee is in Active NHT Details or OJT Performance (see logic/batches.js nhtStage). */
+export function nhtStage() {
+  const status = {}, finalMock = {}, movedOn = {};
+  db.all('SELECT emp_id, ojt_entered, ojt_eligible, updated_on FROM nht_status').forEach(r => {
+    status[r.emp_id] = { entered: r.ojt_entered, eligible: r.ojt_eligible };
+    if (r.ojt_entered === 'Yes' && r.ojt_eligible === 'Yes' && r.updated_on) movedOn[r.emp_id] = isoDay(new Date(r.updated_on));
+  });
+  // Final mocks recorded before this rule existed already moved the trainee on (a Pass went straight to OJT),
+  // so only later ones wait for the OJT answers. The start of the rule is noted the first time it is used.
+  let since = db.getMeta('ojt_answer_rule_since', '');
+  if (!since) { since = new Date().toISOString(); db.setMeta('ojt_answer_rule_since', since); }
+  db.all('SELECT emp_id, status, mock_date FROM mock_scores WHERE final = 1 AND approved_on >= ? ORDER BY id', since)
+    .forEach(r => { finalMock[r.emp_id] = { status: r.status, date: r.mock_date }; });
+  return { status, finalMock, movedOn };
 }
 
 /** Emp ID -> { start, end } from the OJT dashboard, or null when it has never been built. */

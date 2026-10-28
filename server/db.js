@@ -97,8 +97,13 @@ export function backup(file) {
   db.exec("VACUUM INTO '" + file.replace(/'/g, "''") + "'");
 }
 
+const dirtyHooks = [];
+/** fn() runs after any app tab changes (the mirror uses it to copy the change to the tracker within seconds). */
+export function onDirty(fn) { dirtyHooks.push(fn); }
+
 /** Notes that an app tab changed, so the mirror copies it back to the tracker. */
 export function markDirty(...tabs) {
   const now = new Date().toISOString();
   tabs.forEach(t => run('INSERT INTO mirror_dirty (tab, since) VALUES (?, ?) ON CONFLICT(tab) DO NOTHING', t, now));
+  dirtyHooks.forEach(fn => setImmediate(fn));
 }

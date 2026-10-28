@@ -79,7 +79,13 @@ export function install() {
         return respond(200, { valueRanges: q.getAll('ranges').map(r => ({ range: r, values: read(book, r, q.get('valueRenderOption')) })) });
       }
       if (rest === '/values:batchUpdate') { body.data.forEach(d => write(book, d.range, d.values)); return respond(200, {}); }
-      if (rest === '/values:batchClear') { body.ranges.forEach(r => { const t = book.tabs.find(x => x.title === parseRange(r).title); t.grid = []; }); return respond(200, {}); }
+      if (rest === '/values:batchClear') {
+        body.ranges.forEach(r => {
+          const p = parseRange(r), t = book.tabs.find(x => x.title === p.title);
+          t.grid.forEach((row, i) => { if (i + 1 >= p.r1 && i + 1 <= p.r2) for (let c = p.c1; c <= Math.min(p.c2, row.length); c++) row[c - 1] = ''; });
+        });
+        return respond(200, {});
+      }
       if (rest === ':batchUpdate') {
         body.requests.forEach(q => {
           if (q.addSheet) book.tabs.push({ sheetId: book.tabs.length + 100, title: q.addSheet.properties.title, grid: [], rows: q.addSheet.properties.gridProperties.rowCount, cols: q.addSheet.properties.gridProperties.columnCount });

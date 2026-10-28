@@ -1,5 +1,5 @@
 /**
- * NHT Performance, change requests and approvals.
+ * Active NHT Details, change requests and approvals.
  * A trainer's first update of a field and every admin edit apply straight away; changing a value already set
  * through Trainer Desk waits for an admin. Every entry, applied or not, is kept in change_requests.
  */
@@ -10,7 +10,7 @@ import { CONFIG, SERVER } from '../config.js';
 import { today, stamp } from '../dates.js';
 import { buildTrainerView, buildNhtList } from '../logic/batches.js';
 import { checkChange, updatedFields, pendingByTrainee } from '../logic/changes.js';
-import { parseOjtRows } from './ojt.js';
+import { parseOjtRows, scheduleOjtRebuild } from './ojt.js';
 import { ojtTeamList } from '../logic/ojt.js';
 import { normId, ordinal, attemptNumber, prettyName, UserError } from '../logic/common.js';
 import { writeMarks, trackedTrainees } from './attendance.js';
@@ -18,7 +18,7 @@ import { planAttendanceSave } from '../logic/attendance.js';
 
 const isOjtField = f => f === 'OJT Team' || f.indexOf('OJT Input: ') === 0;
 
-/** Trainees under this trainer who are still in training, with KC, mocks, OJT answers and requests. */
+/** Active NHT Details: trainees under this trainer not yet moved to OJT, with KC, mocks, OJT answers and requests. */
 export function getNhtCandidates(user, trainer) {
   const s = data.session(user);
   const target = data.assertTrainer(s, trainer);
@@ -26,7 +26,7 @@ export function getNhtCandidates(user, trainer) {
   const view = buildTrainerView(master, target, day, CONFIG.BATCH_MERGE_DAYS);
   const batchOf = {};
   view.batches.forEach(b => b.trainees.forEach(p => { batchOf[p.empId] = { name: b.name, key: b.key, start: b.start }; }));
-  const list = buildNhtList(master, target, batchOf);
+  const list = buildNhtList(master, target, batchOf, data.nhtStage());
   const ids = list.map(c => c.empId);
   const mocks = data.mocks(ids);
   const reqs = data.requests();
@@ -45,8 +45,8 @@ export function getNhtCandidates(user, trainer) {
 
 /** Everything checkChange needs for one trainee in training. */
 function nhtContext(target, id, batchHasMock) {
-  const trainee = buildNhtList(data.masterRows(target), target, {}).find(c => c.empId === id);
-  if (!trainee) throw new UserError(id + ' is not in training under this trainer.');
+  const trainee = buildNhtList(data.masterRows(target), target, {}, data.nhtStage()).find(c => c.empId === id);
+  if (!trainee) throw new UserError(id + ' is not in Active NHT Details under this trainer.');
   const st = data.nhtStatus(id);
   trainee.ojtEntered = st.entered || ''; trainee.ojtEligible = st.eligible || '';
   return { departments: data.departments(), today: today(), trainee, mocks: data.mocks([id])[id] || [],
@@ -69,10 +69,10 @@ export function submitChange(user, req, batchHasMock) {
   return saveChange(s, target, id, ctx.trainee.name, field, checked);
 }
 
-/** OJT team or a hand-entered OJT score for a trainee in this trainer's OJT Summary. */
+/** OJT team or a hand-entered OJT score for a trainee in this trainer's OJT Performance. */
 function submitOjtChange(s, target, id, field, value) {
   const row = parseOjtRows(target, today(), false).rows.find(r => r.empId === id);
-  if (!row) throw new UserError(id + ' is not in OJT Summary under this trainer. Refresh OJT data and try again.');
+  if (!row) throw new UserError(id + ' is not in OJT Performance under this trainer. Refresh OJT data and try again.');
   const targets = data.ojtTargets();
   const picked = data.ojtTeams()[id];                 // a team picked since the last refresh counts straight away
   if (picked && targets[picked]) { row.team = picked; row.teamSet = true; }
@@ -120,7 +120,7 @@ export function applyChange(q, approver) {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       q.empId, q.name, q.trainer, v.date, ordinal(v.attempt), v.score === '' || v.score == null ? null : Number(v.score), v.status, v.final ? 1 : 0, q.by, approver, now);
     db.markDirty('Mock Scores');
-    if (v.final) finalMock();        // the final attempt also takes the trainee out of NHT Performance
+    if (v.final) finalMock();        // a final Fail ends training; a final Pass waits for the OJT answers
   } else if (q.field === 'Mock Edit') {
     const hit = db.all('SELECT id, attempt FROM mock_scores WHERE emp_id = ? ORDER BY id DESC', q.empId).find(r => attemptNumber(r.attempt) === Number(v.attempt));
     if (!hit) throw new UserError(ordinal(v.attempt) + ' attempt for ' + q.empId + ' is no longer recorded.');
@@ -134,6 +134,7 @@ export function applyChange(q, approver) {
             ON CONFLICT(emp_id) DO UPDATE SET ${col} = excluded.${col}, updated_by = excluded.updated_by, updated_on = excluded.updated_on`,
       q.empId, q.name, q.trainer, v.answer, approver, now);
     db.markDirty('NHT Status');
+    scheduleOjtRebuild();            // both answers Yes moves the trainee to OJT Performance
   } else if (q.field === 'OJT Team') {
     db.run(`INSERT INTO ojt_team (emp_id, name, trainer, team, updated_by, updated_on) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(emp_id) DO UPDATE SET name = excluded.name, trainer = excluded.trainer, team = excluded.team, updated_by = excluded.updated_by, updated_on = excluded.updated_on`,
@@ -167,11 +168,12 @@ function notifyAdmins(q, s) {
 }
 
 /**
- * One Save for everything changed on a trainee in NHT Performance. req: { trainer, empId, changes: [{ field, value }] }
- * The mock is checked first; OJT answers are saved before the mock, because a final mock takes the trainee out of training.
+ * One Save for everything changed on a trainee in Active NHT Details. req: { trainer, empId, changes: [{ field, value }] }
+ * The mock is checked first. The department saves first (everything else needs it) and the OJT answers last,
+ * because both answers Yes moves the trainee to OJT Performance.
  */
 export function submitPageChanges(user, req) {
-  const order = ['Department', 'Training Start Date', 'OJT Entered', 'OJT Eligible', 'Mock Edit', 'Mock'];
+  const order = ['Department', 'Training Start Date', 'Mock Edit', 'Mock', 'OJT Entered', 'OJT Eligible'];
   const changes = ((req && req.changes) || []).slice().sort((a, b) => order.indexOf(a.field) - order.indexOf(b.field));
   if (!changes.length) throw new UserError('Nothing to save.');
   const mock = changes.find(c => c.field === 'Mock');

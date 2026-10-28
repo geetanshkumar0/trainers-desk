@@ -1,4 +1,4 @@
-/** OJT Summary and the OJT refresh (admins, and every morning). */
+/** OJT Performance and the OJT refresh (admins, every morning, and after a trainee moves to OJT). */
 import * as db from '../db.js';
 import * as data from '../data.js';
 import { CONFIG, SERVER } from '../config.js';
@@ -24,6 +24,7 @@ export function parseOjtRows(trainer, day, isAdmin) {
 export function getOjtSummary(user, trainer) {
   const s = data.session(user);
   const target = data.assertTrainer(s, trainer);
+  if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = null; buildOjtDashboard(); }   // someone just moved to OJT
   const view = parseOjtRows(target, today(), s.isAdmin);
   const ids = view.rows.map(r => r.empId);
   const metrics = {};
@@ -50,7 +51,7 @@ export function buildOjtDashboard(missingTabs) {
   const day = today();
   const talkById = {};
   db.all('SELECT emp_id, date, secs FROM in_talktime').forEach(t => { (talkById[t.emp_id] = talkById[t.emp_id] || []).push({ date: t.date, secs: t.secs }); });
-  const rows = buildOjtRows(data.masterRows(''), talkById, day, CONFIG.TALKTIME_MIN_SECONDS, CONFIG.OJT_DAYS);
+  const rows = buildOjtRows(data.masterRows(''), talkById, day, CONFIG.TALKTIME_MIN_SECONDS, CONFIG.OJT_DAYS, data.nhtStage());
   const sources = {};
   const bySource = {};
   db.all('SELECT source, date, email, value, lead FROM in_dump_rows').forEach(r => { (bySource[r.source] = bySource[r.source] || []).push(r); });
@@ -77,6 +78,16 @@ export function buildOjtDashboard(missingTabs) {
   });
   const count = st => rows.filter(r => r.status === st).length;
   return { rows: rows.length, inOjt: count('In OJT'), waiting: count('Waiting for first call'), updatedOn: isoDay() + ' ' + hhmm(), missingTabs: missingTabs || [] };
+}
+
+let rebuildTimer = null;
+/** Rebuilds the OJT list shortly after a trainee's OJT answers change (from the data already in the database). */
+export function scheduleOjtRebuild() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => {
+    rebuildTimer = null;
+    try { if (db.isOpen()) buildOjtDashboard(); } catch (e) { log('rebuild after OJT answers failed:', e.message); }
+  }, 300);
 }
 
 let running = null;

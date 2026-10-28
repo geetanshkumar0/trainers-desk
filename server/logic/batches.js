@@ -105,12 +105,27 @@ export function applyTracking(trainees, ojtMap, fallbackDays) {
   return trainees;
 }
 
-/** Trainees still in training for one trainer: active, no last working date, no final mock / training end date. Newest DOJ first. */
-export function buildNhtList(master, trainerEmail, batchOf) {
+/**
+ * Where a trainee stands after training. stage: { status: { empId: { entered, eligible } }, finalMock: { empId: { status, date } } }
+ *   'ojt'  OJT Entered and OJT Eligible are both Yes (or, for trainees from before Trainer Desk, a final mock Pass in the sheet)
+ *   'done' training ended without moving to OJT (final mock Fail), or the training end date came from the sheet
+ *   'nht'  still in training, including a final mock Pass that is waiting for the OJT answers
+ */
+export function nhtStage(row, stage) {
+  const st = (stage && stage.status && stage.status[row.empId]) || {};
+  const fin = stage && stage.finalMock && stage.finalMock[row.empId];
+  if (st.entered === 'Yes' && st.eligible === 'Yes') return 'ojt';
+  if (fin) return fin.status === 'Pass' ? 'nht' : 'done';
+  if (row.trainingEnd) return norm(row.mockStatus) === 'pass' ? 'ojt' : 'done';   // ended before Trainer Desk recorded mocks
+  return 'nht';
+}
+
+/** Active NHT Details for one trainer: active, no last working date, and not yet moved to OJT. Newest DOJ first. */
+export function buildNhtList(master, trainerEmail, batchOf, stage) {
   const out = [];
   master.forEach(row => {
     if (!row.empId || row.trainer !== trainerEmail) return;
-    if (norm(row.status) !== 'active' || row.lwd || row.trainingEnd) return;
+    if (norm(row.status) !== 'active' || row.lwd || nhtStage(row, stage) !== 'nht') return;
     const b = (batchOf && batchOf[row.empId]) || {};
     out.push({
       empId: row.empId, name: row.name, doj: row.doj, mode: row.mode, email: row.email, phone: row.phone,

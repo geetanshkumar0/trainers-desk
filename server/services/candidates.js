@@ -9,7 +9,7 @@ import { buildUnclaimed, planAssignment } from '../logic/candidates.js';
 import { cleanIds, isIso, norm, UserError } from '../logic/common.js';
 
 export function getSession(user) {
-  return data.session(user);
+  return Object.assign(data.session(user), { unclaimedFrom: CONFIG.UNCLAIMED_FROM });
 }
 
 /** All batches for one trainer. */
@@ -59,7 +59,7 @@ export function assignCandidates(user, req) {
   data.masterRows('');
   return db.tx(() => {
     const inHr = new Set();
-    hrRows().forEach(r => { if (!(CONFIG.UNCLAIMED_FROM && r.doj && r.doj < CONFIG.UNCLAIMED_FROM)) inHr.add(r.empId); });
+    hrRows().forEach(r => { if (!(CONFIG.UNCLAIMED_FROM && (!r.doj || r.doj < CONFIG.UNCLAIMED_FROM))) inHr.add(r.empId); });
     const plan = planAssignment(ids, mappedIds(), inHr, excludedMap());
     outbox.masterAppend(plan.assign.map(empId => ({ empId, trainer, trainingStart: startIso })));
     return { trainer, assigned: plan.assign, skipped: plan.skipped };

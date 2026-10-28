@@ -4,7 +4,14 @@
 
 Live at **https://nbtrainerdesk.duckdns.org** (Google sign-in, @nobroker.in only).
 
-Trainer Desk helps the T&D team run batches from day one to the end of OJT: unclaimed candidates, attendance, NHT performance, OJT summary, the two performance dashboards, batch summaries and admin approvals.
+Trainer Desk helps the T&D team run batches from day one to the end of OJT: unclaimed candidates, attendance, Active NHT Details, OJT Performance, the two performance dashboards, batch summaries and admin approvals.
+
+## A trainee's path
+
+1. **Unclaimed Candidates**: everyone in HR_WFO / HR_WFH who joined after 20 Oct 2026 (`UNCLAIMED_FROM` in `server/config.js`) and is not yet in Master Dashboard. New joiners show up within a minute of being added to the HR sheets. A trainer selects people and assigns them to themselves.
+2. **Active NHT Details** and **Attendance Tracker**: a claimed trainee appears in both straight away. In Active NHT Details the trainer sets the **department and sub-team first**; the training start date, mock and OJT sections stay locked until then.
+3. **OJT Performance**: when **OJT Entered** and **OJT Eligible** are both **Yes**, the trainee leaves Active NHT Details and moves to OJT Performance. A final mock **Pass** keeps them in Active NHT Details until those answers are given; a final mock **Fail** ends training. (Trainees whose final mock was recorded before 28 Oct 2026 stay where they were: a Pass is already in OJT.)
+4. Every change is saved at once and copied to the tracker within seconds: Master Dashboard for claims, departments, start dates and final mocks; the app tabs (Attendance, NHT Status, Mock Scores, Change Requests, ...) for the rest.
 
 ## Built with
 
@@ -32,7 +39,7 @@ Trainer Desk helps the T&D team run batches from day one to the end of OJT: uncl
 - **Inputs** (sheets other teams keep up to date) are read into SQLite every `REFRESH_SECONDS`. Talktime and the OJT dumps are large, so they are read only by the OJT refresh.
 - **Trainer Desk's own data** lives only in SQLite. That covers attendance, change requests and approvals, mock scores, NHT status, OJT team and manual inputs, excluded candidates, the OJT dashboard and the WhatsApp log.
 - **Master Dashboard is still written** when someone claims a candidate, sets a department or training start date, or records a final mock, because the sheet's formulas and other tabs depend on it. Each write is saved in the database first and then sent to Google by the **outbox**, in order. If Google is slow or down, nothing is lost: it retries, and the page already shows the new value.
-- **Mirror:** every few minutes, the app tabs that changed are copied back to the tracker with the same columns as before (Attendance, Change Requests, Mock Scores, NHT Status, OJT Team, OJT Manual Inputs, OJT Dashboard, OJT Performance, Excluded Candidates, Attendance Log, WhatsApp Log), so reports built on them keep working. **These tabs are now copies: edits made there are overwritten.** Make changes in Trainer Desk. Turn the copy off with `SHEET_MIRROR=off`.
+- **Mirror:** a few seconds after each save (`MIRROR_DELAY_SECONDS`), the app tabs that changed are copied back to the tracker with the same columns as before (Attendance, Change Requests, Mock Scores, NHT Status, OJT Team, OJT Manual Inputs, OJT Dashboard, OJT Performance, Excluded Candidates, Attendance Log, WhatsApp Log), so reports built on them keep working. **These tabs are now copies: edits made there are overwritten.** Make changes in Trainer Desk. Turn the copy off with `SHEET_MIRROR=off`.
 - **First start:** before anything can be saved, Trainer Desk reads the existing app tabs from the tracker into SQLite once. This only happens while its own tables are empty, so it can never overwrite data saved in Trainer Desk.
 
 ## Folders
@@ -95,7 +102,7 @@ This runs the end-to-end tests against a fake Google Sheets API. They cover the 
 ## Moving the live server to this version
 
 1. Back up the server folder, then put this project in its place. Keep the `data/` folder and `.env`.
-2. In `.env`, compare against `.env.example`. The new settings are `MIRROR_SECONDS` and `SHEET_MIRROR`.
+2. In `.env`, compare against `.env.example`. The new settings are `SHEET_MIRROR`, `MIRROR_DELAY_SECONDS` and `MIRROR_SECONDS`.
 3. `docker compose up -d` (it now uses `node:22-alpine`).
 4. On first start, the saved nbhr token (`data/sheets_token.json`) is moved into the database. Trainer Desk reads the sheets, imports the existing app tabs, and then starts the mirror. Saving is blocked for those few seconds, with the message "starting up".
 5. Open `/admin/status` and check that `importedFromSheets` shows the row counts, `sync.lastError` is empty and `outbox.failed` is empty.
@@ -130,7 +137,8 @@ The database is copied every night to `data/backups/trainer-desk-YYYY-MM-DD.db`,
 | `MAIL_TO` | Every e-mail goes here instead of the admins |
 | `MAIL_TO_OVERRIDE` | Testing only: redirect every e-mail and mark the subject "[for …]" |
 | `REFRESH_SECONDS` | How often the input sheets are read (60) |
-| `SHEET_MIRROR`, `MIRROR_SECONDS` | Copy app tabs back to the tracker (`on`), and how often (300) |
+| `SHEET_MIRROR` | Copy app tabs back to the tracker (`on`) |
+| `MIRROR_DELAY_SECONDS`, `MIRROR_SECONDS` | Copy a change this many seconds after it is saved (5); retry anything left over this often (300) |
 | `WA_MODE` | `off` (log only), `test` (only to `WA_TEST_TO`) or `live` (to candidates) |
 | `WA_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WA_TEMPLATE`, `WA_API_VERSION` | WhatsApp Cloud API |
 | `DATA_DIR` | Where the database and backups live (`/data` in Docker) |

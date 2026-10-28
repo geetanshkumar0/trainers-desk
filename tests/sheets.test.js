@@ -13,7 +13,7 @@ import * as fake from './fake-google.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'td-test-'));
 Object.assign(process.env, { TRACKER_ID: 'TRACKER', DUMPS_ID: 'DUMPS', DATA_DIR: dir, DEMO: '', DESK_EXTRA_ADMINS: 'priya.nair@nobroker.in',
-  GOOGLE_CLIENT_ID: 'x', GOOGLE_CLIENT_SECRET: 'y', SHEET_MIRROR: 'on' });
+  GOOGLE_CLIENT_ID: 'x', GOOGLE_CLIENT_SECRET: 'y', SHEET_MIRROR: 'on', MIRROR_DELAY_SECONDS: '1' });
 
 const { SERVER, CONFIG } = await import('../server/config.js');
 const db = await import('../server/db.js');
@@ -98,26 +98,89 @@ test('master writes survive Google being down, and the overlay keeps them visibl
   assert.equal(db.get('SELECT department FROM in_master WHERE emp_id = ?', trainee.empId).department, 'PIA');
 });
 
-test('a final mock writes the three Master Dashboard columns', async () => {
-  const c = changes.getNhtCandidates(ADMIN, TR).candidates.find(x => x.kc && !x.mocks.length);
+test('unclaimed lists only people who joined after 20 Oct', () => {
+  assert.equal(CONFIG.UNCLAIMED_FROM, '2026-10-21');
+  const list = cand.getUnclaimedCandidates(ADMIN);
+  assert.ok(list.length > 0);
+  assert.ok(list.every(c => c.doj && c.doj >= CONFIG.UNCLAIMED_FROM), 'nobody from before the cut-off or without a DOJ');
+});
+
+test('Active NHT Details: the department and sub-team come first', () => {
+  const c = changes.getNhtCandidates(TR, TR).candidates.find(x => x.kc && !x.mocks.length);
+  db.run("UPDATE in_master SET department = '', sub_team = '' WHERE emp_id = ?", c.empId);     // as a fresh claim arrives
+  const ts = { field: 'Training Start Date', value: { date: addDaysIso(today(), 1) } };
+  assert.throws(() => changes.submitChange(TR, Object.assign({ trainer: TR, empId: c.empId }, ts)), /department and sub-team first/);
+  // Department and the rest in one Save: the department goes first, so the rest is allowed.
+  const res = changes.submitPageChanges(TR, { trainer: TR, empId: c.empId, changes: [ts, { field: 'Department', value: { department: 'Tenant Servicing', subTeam: 'TSPP' } }] });
+  assert.ok(res.results.every(r => r.ok), JSON.stringify(res));
+  // A department that has sub-teams needs one.
+  const d = changes.getNhtCandidates(TR, TR).candidates.find(x => x.empId !== c.empId && x.kc);
+  db.run("UPDATE in_master SET department = 'Tenant Servicing', sub_team = '' WHERE emp_id = ?", d.empId);
+  assert.throws(() => changes.submitChange(TR, { trainer: TR, empId: d.empId, field: 'Mock', value: { date: today(), attempt: 1, status: 'Fail' } }), /sub-team first/);
+});
+
+test('a final Pass stays in Active NHT Details until OJT Entered and OJT Eligible are Yes, then moves to OJT Performance', async () => {
+  mirror.start();
+  const c = changes.getNhtCandidates(ADMIN, TR).candidates.find(x => x.kc && !x.mocks.length && x.department && x.subTeam);
   const d = addDaysIso(today(), -1);
-  const res = changes.submitPageChanges(ADMIN, { trainer: TR, empId: c.empId, changes: [{ field: 'Mock', value: { date: d, attempt: 1, status: 'Pass' } }] });
+  const res = changes.submitPageChanges(TR, { trainer: TR, empId: c.empId, changes: [{ field: 'Mock', value: { date: d, attempt: 1, status: 'Pass' } }] });
   assert.equal(res.results[0].ok, true, JSON.stringify(res));
   await outbox.kick();
   const row = masterGrid().find(x => x[col('Emp ID')] === c.empId);
   assert.deepEqual([row[col('Final Mock Clearance / Fail Attempts')], row[col('Final Mock Status')], row[col('Final Mock/Training End Date')]], ['1st', 'Pass', d]);
-  assert.ok(!changes.getNhtCandidates(ADMIN, TR).candidates.some(x => x.empId === c.empId), 'left NHT Performance');
+  const inNht = () => changes.getNhtCandidates(TR, TR).candidates.some(x => x.empId === c.empId);
+  const inOjt = () => ojt.getOjtSummary(TR, TR).rows.some(x => x.empId === c.empId);
+  assert.ok(inNht() && !inOjt(), 'waits for the OJT answers');
+  changes.submitPageChanges(TR, { trainer: TR, empId: c.empId, changes: [{ field: 'OJT Entered', value: { answer: 'Yes' } }, { field: 'OJT Eligible', value: { answer: 'No' } }] });
+  assert.ok(inNht() && !inOjt(), 'Eligible No: still in training');
+  const r2 = changes.submitPageChanges(ADMIN, { trainer: TR, empId: c.empId, changes: [{ field: 'OJT Eligible', value: { answer: 'Yes' } }] });
+  assert.ok(r2.results[0].ok, JSON.stringify(r2));
+  assert.ok(!inNht() && inOjt(), 'moved to OJT Performance');
+  // Everything in one Save, as the page sends it: mock Pass + both answers Yes.
+  const g = changes.getNhtCandidates(ADMIN, TR).candidates.find(x => x.kc && !x.mocks.length && x.department && x.subTeam);
+  const one = changes.submitPageChanges(TR, { trainer: TR, empId: g.empId, changes: [{ field: 'OJT Eligible', value: { answer: 'Yes' } },
+    { field: 'OJT Entered', value: { answer: 'Yes' } }, { field: 'Mock', value: { date: d, attempt: 1, status: 'Pass' } }] });
+  assert.ok(one.results.every(r => r.ok), JSON.stringify(one));
+  assert.ok(!changes.getNhtCandidates(TR, TR).candidates.some(x => x.empId === g.empId) && ojt.getOjtSummary(TR, TR).rows.some(x => x.empId === g.empId));
+  // A final Fail ends training without OJT.
+  const f = changes.getNhtCandidates(ADMIN, TR).candidates.find(x => x.kc && !x.mocks.length && x.department && x.subTeam);
+  changes.submitPageChanges(TR, { trainer: TR, empId: f.empId, changes: [{ field: 'Mock', value: { date: d, attempt: 1, status: 'Fail', final: true } }] });
+  assert.ok(!changes.getNhtCandidates(TR, TR).candidates.some(x => x.empId === f.empId));
+  // ...and the sheet has the answers within seconds, without anyone pressing anything.
+  await new Promise(r => setTimeout(r, 2500));
+  const ns = fake.tab('TRACKER', 'NHT Status').grid.find(x => x[0] === c.empId);
+  assert.deepEqual([ns[3], ns[4]], ['Yes', 'Yes']);
+  assert.ok(fake.tab('TRACKER', 'Mock Scores').grid.some(x => x[0] === f.empId && x[6] === 'Fail'));
+  mirror.stop();
+});
+
+test('people already in OJT before the new rule stay there', () => {
+  // Their final mock Pass came before the rule, so they are not pulled back into Active NHT Details.
+  const before = db.all("SELECT emp_id FROM mock_scores WHERE final = 1 AND status = 'Pass' AND approved_on < ?", db.getMeta('ojt_answer_rule_since', '')).map(r => r.emp_id);
+  assert.ok(before.length > 5);
+  const nht = new Set(changes.getNhtCandidates(ADMIN, TR).candidates.map(x => x.empId));
+  assert.ok(before.every(id => !nht.has(id)));
 });
 
 test('the mirror copies app tabs back, and they read back the same', async () => {
   const t = attendance.getAttendance(TR, TR).trainees.find(x => x.doj <= today() && x.trackUntil >= today());
   attendance.saveAttendance(ADMIN, { trainer: TR, days: [{ date: today(), marks: { [t.empId]: 'WO' } }] });
   const done = await mirror.mirrorNow();
-  assert.ok(done.includes('Attendance') && done.includes('Change Requests') && done.includes('Mock Scores'), done.join());
+  assert.ok(done.includes('Attendance') && done.includes('Attendance Log'), done.join());
   assert.equal(db.get('SELECT COUNT(*) n FROM mirror_dirty').n, 0);
   const grid = fake.tab('TRACKER', 'Attendance').grid;
   const dcol = grid[0].indexOf(today());
   assert.equal(grid.find(r => r[0] === t.empId)[dcol], 'WO');
+  // Written in place: a tab that gets shorter is blanked below, never left with old rows.
+  const two = cand.getUnclaimedCandidates(ADMIN).slice(0, 2).map(x => x.empId);
+  cand.excludeCandidates(ADMIN, { ids: two, reason: 'test' });
+  await mirror.mirrorNow();
+  assert.equal(fake.tab('TRACKER', 'Excluded Candidates').grid.filter(r => two.includes(r[0])).length, 2);
+  cand.restoreCandidates(ADMIN, { ids: [two[0]] });
+  await mirror.mirrorNow();
+  const ex = fake.tab('TRACKER', 'Excluded Candidates').grid;
+  assert.equal(ex.filter(r => r[0] === two[1]).length, 1);
+  assert.equal(ex.filter(r => r[0] === two[0]).length, 0, 'the restored row is gone, not left behind');
   assert.ok(fake.tab('TRACKER', 'Attendance Log'), 'new tab created');
   // Round trip: what the mirror wrote imports into an empty database as the same data.
   const before = { att: db.get('SELECT COUNT(*) n FROM attendance').n, cr: db.get('SELECT COUNT(*) n FROM change_requests').n, mk: db.get('SELECT COUNT(*) n FROM mock_scores').n };

@@ -1,18 +1,21 @@
 /** OJT: start date from Talktime, targets, achievements, scores and result. */
 import { norm, normId } from './common.js';
 import { addDaysIso, dayNumber } from '../dates.js';
+import { nhtStage } from './batches.js';
 
 /**
- * Trainees who moved from NHT to OJT (final mock Pass, with a training end date), with OJT dates and talktime.
+ * Trainees who moved from NHT to OJT, with OJT dates and talktime. A trainee moves when OJT Entered and OJT Eligible
+ * are both Yes (see nhtStage); stage.movedOn gives the day that happened, used when there is no training end date.
  * talkById: { empId: [{ date, secs }] }. OJT start = first day with talktime above minSecs on or after training end.
  */
-export function buildOjtRows(master, talkById, today, minSecs, ojtDays) {
+export function buildOjtRows(master, talkById, today, minSecs, ojtDays, stage) {
   const out = [], seen = new Set();
   master.forEach(v => {
     const id = v.empId;
     if (!id || seen.has(id)) return;
-    const tEnd = v.trainingEnd;
-    if (norm(v.mockStatus) !== 'pass' || !tEnd) return;         // still in NHT, or did not clear the final mock
+    if (nhtStage(v, stage) !== 'ojt') return;                     // still in NHT, or training ended without OJT
+    const tEnd = v.trainingEnd || (stage && stage.movedOn && stage.movedOn[id]) || '';
+    if (!tEnd) return;
     seen.add(id);
     const days = (talkById[id] || []).filter(t => t.date >= tEnd && t.secs > minSecs)
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

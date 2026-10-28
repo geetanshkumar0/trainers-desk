@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS attendance_log (
   emp_id TEXT NOT NULL, date TEXT NOT NULL, old_code TEXT NOT NULL, new_code TEXT NOT NULL
 );
 
--- Every change a trainer or admin makes in NHT Performance, OJT Summary or (for a saved mark) Attendance.
+-- Every change a trainer or admin makes in Active NHT Details, OJT Performance or (for a saved mark) Attendance.
 CREATE TABLE IF NOT EXISTS change_requests (
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
