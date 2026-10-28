@@ -17,14 +17,28 @@ function loaded() {
     throw new UserError('Still loading the sheets, try again in a few seconds.', 503);
   }
 }
-// Claimed in Trainer Desk: in this version (claims) or the previous one (its WhatsApp Log tab, see sync.js).
-const CLAIMED = ' WHERE emp_id IN (SELECT emp_id FROM claims UNION SELECT emp_id FROM in_prior_claims)';
+/*
+ * Claimed trainees: Master Dashboard, with blanks filled in from the HR sheet. Trainer Desk only writes Emp ID, Trainer and
+ * Training Start Date; the sheet's formulas fill name, DOJ and status. When they do not (a new row the formulas do not
+ * reach), a blank DOJ or status would hide the trainee from Attendance and Active NHT Details, so the HR value is used.
+ * Claimed in Trainer Desk: in this version (claims) or the previous one (its WhatsApp Log tab, see sync.js).
+ */
+const fill = (col, alias) => `COALESCE(NULLIF(m.${col}, ''), h.${col}, '') ${alias || col}`;
+const CLAIMED_SELECT = `SELECT m.emp_id empId, m.trainer, m.manager, m.mentor, ${fill('doj')},
+  COALESCE(NULLIF(m.work_mode, ''), CASE WHEN instr(m.emp_id, 'A') > 0 THEN 'WFH' ELSE 'WFO' END) mode,
+  ${fill('name')}, m.email, ${fill('phone')}, m.department, m.sub_team subTeam, ${fill('location')}, ${fill('status')},
+  m.lateral, m.training_start trainingStart, m.kc_score kcScore, m.kc_attempt kcAttempt, m.kc_status kcStatus,
+  m.mock_attempt mockAttempt, m.mock_status mockStatus, m.training_end trainingEnd, m.training_days trainingDays, m.ojt_start ojtStart,
+  m.ojt_pct ojtPct, m.ojt_end ojtEnd, m.attrition_day attritionDay, m.lwd
+  FROM in_master m
+  LEFT JOIN (SELECT emp_id, name, status, doj, location, phone, MIN(seq) FROM in_hr GROUP BY emp_id) h ON h.emp_id = m.emp_id
+  WHERE m.emp_id IN (SELECT emp_id FROM claims UNION SELECT emp_id FROM in_prior_claims)`;
 
 /** Master Dashboard rows of trainees claimed in Trainer Desk (in sheet order), optionally for one trainer. */
 export function masterRows(trainer) {
   loaded();
-  return trainer ? db.all(MASTER_SELECT + CLAIMED + ' AND trainer = ? ORDER BY COALESCE(row_no, 1e9), seq', trainer)
-    : db.all(MASTER_SELECT + CLAIMED + ' ORDER BY COALESCE(row_no, 1e9), seq');
+  return trainer ? db.all(CLAIMED_SELECT + ' AND m.trainer = ? ORDER BY COALESCE(m.row_no, 1e9), m.seq', trainer)
+    : db.all(CLAIMED_SELECT + ' ORDER BY COALESCE(m.row_no, 1e9), m.seq');
 }
 
 /** Every Master Dashboard row, claimed here or not. Only the Performance Dashboards use this. */

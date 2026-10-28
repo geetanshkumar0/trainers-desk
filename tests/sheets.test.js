@@ -107,6 +107,20 @@ test('candidates claimed in the previous Trainer Desk (its WhatsApp Log) show up
   assert.ok(mine.length > 2 && !att.includes(mine[2]), 'trainees never claimed in Trainer Desk stay hidden');
 });
 
+test("claimed trainees whose Master Dashboard row has no DOJ or status yet still show (from the HR sheet)", async () => {
+  // The sheet's formulas have not reached these rows: only Emp ID and Trainer are filled in.
+  const pick = cand.getUnclaimedCandidates(TR).filter(c => c.active && c.doj <= today()).slice(0, 2).map(c => c.empId);
+  cand.assignCandidates(TR, { ids: pick, trainer: TR });
+  await outbox.kick();
+  await sync.syncTracker('blank formula columns');
+  const rows = db.all('SELECT doj, status, name FROM in_master WHERE emp_id IN (?, ?)', ...pick);
+  assert.ok(rows.every(r => !r.doj && !r.status && !r.name), 'the sheet itself has them blank');
+  const att = attendance.getAttendance(TR, TR).trainees.filter(t => pick.includes(t.empId));
+  assert.equal(att.length, 2);
+  assert.ok(att.every(t => t.doj && t.name && t.trackUntil >= today()), 'DOJ and name from HR, so they are in the default attendance view');
+  assert.equal(changes.getNhtCandidates(TR, TR).candidates.filter(c => pick.includes(c.empId)).length, 2, 'Active (from HR), so in Active NHT Details');
+});
+
 test('master writes survive Google being down, and the overlay keeps them visible', async () => {
   const trainee = changes.getNhtCandidates(ADMIN, TR).candidates.find(c => c.department !== 'PIA');
   const realFetch = globalThis.fetch;
