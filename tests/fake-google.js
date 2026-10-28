@@ -10,6 +10,10 @@ export function addBook(id, tabs, opts = {}) {
     tabs: Object.keys(tabs).map((t, i) => ({ sheetId: i + 1, title: t, grid: tabs[t].map(r => r.slice()), rows: Math.max(tabs[t].length + 20, 50), cols: 40 })) };
   return books[id];
 }
+export function addTab(id, title, grid) {
+  const b = books[id];
+  b.tabs.push({ sheetId: b.tabs.length + 1000, title, grid: grid.map(r => r.slice()), rows: Math.max(grid.length + 20, 50), cols: 40 });
+}
 export const tab = (id, title) => books[id].tabs.find(t => t.title === title);
 export const calls = [];
 

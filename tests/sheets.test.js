@@ -91,6 +91,22 @@ test('a claim is saved locally, then written to Master Dashboard (adding rows)',
   assert.deepEqual(cand.getTrainerBatches(ADMIN, 'karthik.menon@nobroker.in').batches, [], 'other trainers: still nothing claimed');
 });
 
+test('candidates claimed in the previous Trainer Desk (its WhatsApp Log) show up in Attendance and Active NHT Details', async () => {
+  const K = 'karthik.menon@nobroker.in';
+  const mine = db.all("SELECT emp_id FROM in_master WHERE trainer = ? AND status = 'Active' AND training_end = '' AND lwd = ''", K).map(r => r.emp_id);
+  assert.ok(mine.length >= 2);
+  const claimed = mine.slice(0, 2);
+  // As the previous version wrote it: Sent On | Trainer | Emp ID | Candidate | ... | Status
+  fake.addTab('TRACKER', 'WhatsApp Log', [['Sent On', 'Trainer', 'Emp ID', 'Candidate', 'Candidate Phone', 'Sent To', 'Template', 'Status', 'Detail']]
+    .concat(claimed.map(id => [today() + ' 09:15:00', K, id, '', '', '', 'nht_trainer_assigned', 'logged', 'WA_MODE=off'])));
+  await sync.syncTracker('previous claims');
+  const att = attendance.getAttendance(ADMIN, K).trainees.map(t => t.empId).sort();
+  const nht = changes.getNhtCandidates(ADMIN, K).candidates.map(c => c.empId).sort();
+  assert.deepEqual(att, [...claimed].sort(), 'Attendance shows exactly the previously claimed trainees');
+  assert.deepEqual(nht, [...claimed].sort(), 'Active NHT Details too');
+  assert.ok(mine.length > 2 && !att.includes(mine[2]), 'trainees never claimed in Trainer Desk stay hidden');
+});
+
 test('master writes survive Google being down, and the overlay keeps them visible', async () => {
   const trainee = changes.getNhtCandidates(ADMIN, TR).candidates.find(c => c.department !== 'PIA');
   const realFetch = globalThis.fetch;

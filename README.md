@@ -21,7 +21,7 @@ Trainer Desk helps the T&D team run batches from day one to the end of OJT: uncl
 
 ## Only Trainer Desk's own work is shown
 
-Batches, Attendance, Active NHT Details, OJT Performance and Approvals show **only trainees claimed in Trainer Desk** (the `claims` table), and only what was entered in Trainer Desk. Nothing is imported from the old Attendance, Mock Scores, Change Requests or other tabs.
+Batches, Attendance, Active NHT Details, OJT Performance and Approvals show **only trainees claimed in Trainer Desk**, and only what was entered in Trainer Desk. That covers claims made in this version (the `claims` table) and in the previous Trainer Desk, which logged every candidate it assigned in the tracker's **WhatsApp Log** tab (read into `in_prior_claims`). Nothing is imported from the old Attendance, Mock Scores, Change Requests or other tabs.
 
 The full live data (Master Dashboard, HR, KC, Talktime and the rest) is still read into the database, because it is needed to list unclaimed candidates, to fill in a claimed trainee's details and KC, and for the **Performance Dashboards (Old and New), which are the only screens that count everyone**.
 

@@ -28,6 +28,9 @@ export const CONFIG = {
   TIE_SHEET: 'Tenure Intervention Effectivene',
   DEPARTMENT_SHEET: 'Department List',        // optional; DEFAULT_DEPARTMENTS when the tab is missing
   TEMPLATE_SHEET: 'Trainer Templates',        // optional: Trainer Email | Trainer Name | Trainer Phone | Template Name
+  // The previous Trainer Desk logged one row here for every candidate it assigned (A Sent On, B Trainer, C Emp ID),
+  // even with WhatsApp off. Those people count as claimed in Trainer Desk.
+  CLAIM_LOG_SHEET: 'WhatsApp Log',
   TALKTIME_SHEET: 'Talktime',                 // in the dumps book; no header row: A date, C Emp ID, H talktime
   TALKTIME_COLS: { date: 1, id: 3, talk: 8 },
   OJT_TARGETS_SHEET: 'OJT Targets Across Nobroker',

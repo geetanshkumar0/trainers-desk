@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS in_bq_required (trainer TEXT NOT NULL, month TEXT NOT
 CREATE TABLE IF NOT EXISTS in_bq_done (seq INTEGER PRIMARY KEY, date TEXT NOT NULL, trainer TEXT NOT NULL, effectiveness REAL);
 
 CREATE TABLE IF NOT EXISTS in_departments (seq INTEGER PRIMARY KEY, department TEXT NOT NULL, sub_team TEXT NOT NULL DEFAULT '');
+-- Candidates the previous Trainer Desk assigned (from its WhatsApp Log tab): they count as claimed here too.
+CREATE TABLE IF NOT EXISTS in_prior_claims (emp_id TEXT PRIMARY KEY, trainer TEXT NOT NULL DEFAULT '', claimed_on TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS in_trainer_templates (email TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', template TEXT NOT NULL DEFAULT '');
 
 -- Dumps book: OJT targets (kept as the sheet grid; its layout carries values down), talktime and dump rows.

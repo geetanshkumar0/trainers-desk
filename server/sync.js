@@ -138,6 +138,12 @@ export function ingestTracker(grids, locale, since) {
   if (dl && dl.length > 1) dl.slice(1).forEach(r => { if (text((r || [])[0])) depts.push({ department: text(r[0]), sub_team: text(r[1]) }); });
   else DEFAULT_DEPARTMENTS.forEach(([d, subs]) => { if (!subs.length) depts.push({ department: d, sub_team: '' }); subs.forEach(s => depts.push({ department: d, sub_team: s })); });
 
+  const prior = {};
+  (grids[CONFIG.CLAIM_LOG_SHEET] || []).forEach((r, i) => {
+    const id = normId((r || [])[2]);
+    if (i && id && !prior[id]) prior[id] = { emp_id: id, trainer: norm(r[1]), claimed_on: dateOf(r[0]) };
+  });
+
   const templates = {};
   (grids[CONFIG.TEMPLATE_SHEET] || []).forEach((r, i) => {
     const e = norm((r || [])[0]);
@@ -146,7 +152,7 @@ export function ingestTracker(grids, locale, since) {
 
   db.tx(() => {
     db.exec('DELETE FROM in_master; DELETE FROM in_hr; DELETE FROM in_also_mapped; DELETE FROM in_removed; DELETE FROM in_org; DELETE FROM in_names; ' +
-      'DELETE FROM in_kc; DELETE FROM in_bq_months; DELETE FROM in_bq_required; DELETE FROM in_bq_done; DELETE FROM in_departments; DELETE FROM in_trainer_templates;');
+      'DELETE FROM in_kc; DELETE FROM in_bq_months; DELETE FROM in_bq_required; DELETE FROM in_bq_done; DELETE FROM in_departments; DELETE FROM in_trainer_templates; DELETE FROM in_prior_claims;');
     db.insertMany('in_master', master);
     db.insertMany('in_hr', hr);
     db.insertMany('in_also_mapped', [...also].map(emp_id => ({ emp_id })));
@@ -159,6 +165,7 @@ export function ingestTracker(grids, locale, since) {
     db.insertMany('in_bq_done', done);
     db.insertMany('in_departments', depts);
     db.insertMany('in_trainer_templates', Object.values(templates));
+    db.insertMany('in_prior_claims', Object.values(prior));
     // Master Dashboard writes not yet in the sheet (or sent while this copy was being read) stay visible.
     applyMasterOverlay(since);
     setStatus('tracker', master.length + hr.length + org.length + kc.length);
@@ -220,7 +227,7 @@ const TRACKER_RANGES = () => {
   r[CONFIG.MASTER_SHEET] = ''; CONFIG.HR_SHEETS.forEach(n => { r[n] = ''; });
   CONFIG.ALSO_MAPPED_SHEETS.forEach(n => { r[n] = 'A:C'; });
   r[CONFIG.REMOVED_SHEET] = 'A:D'; r[CONFIG.SCORING_SHEET] = 'A:O'; r[CONFIG.TRACKER_SHEET] = 'A:D'; r[CONFIG.KC_SHEET] = 'A:E';
-  r[CONFIG.IR_SHEET] = 'A:M'; r[CONFIG.TIE_SHEET] = 'A:S'; r[CONFIG.DEPARTMENT_SHEET] = 'A:B'; r[CONFIG.TEMPLATE_SHEET] = 'A:D';
+  r[CONFIG.IR_SHEET] = 'A:M'; r[CONFIG.TIE_SHEET] = 'A:S'; r[CONFIG.DEPARTMENT_SHEET] = 'A:B'; r[CONFIG.TEMPLATE_SHEET] = 'A:D'; r[CONFIG.CLAIM_LOG_SHEET] = 'A:C';
   return r;
 };
 

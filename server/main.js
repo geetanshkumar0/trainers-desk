@@ -43,7 +43,7 @@ function status() {
     sync: { lastOk: s.lastOk, lastError: s.lastError, lastMs: s.lastMs, inputs: db.all('SELECT * FROM sync_status ORDER BY name') },
     outbox: outbox.status(),
     mirror: { on: SERVER.mirror, waiting: db.all('SELECT tab, since FROM mirror_dirty') },
-    ojtRefreshed: db.getMeta('ojt_refreshed', null), claimed: db.get('SELECT COUNT(*) n FROM claims').n,
+    ojtRefreshed: db.getMeta('ojt_refreshed', null), claimed: db.get('SELECT COUNT(*) n FROM claims').n, claimedBefore: db.get('SELECT COUNT(*) n FROM in_prior_claims').n,
     whatsapp: WA_MODE, mail: { configured: G.mailConfigured(), to: SERVER.mailTo || null, override: SERVER.mailOverride || null }
   };
 }

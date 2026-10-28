@@ -17,7 +17,8 @@ function loaded() {
     throw new UserError('Still loading the sheets, try again in a few seconds.', 503);
   }
 }
-const CLAIMED = ' WHERE emp_id IN (SELECT emp_id FROM claims)';
+// Claimed in Trainer Desk: in this version (claims) or the previous one (its WhatsApp Log tab, see sync.js).
+const CLAIMED = ' WHERE emp_id IN (SELECT emp_id FROM claims UNION SELECT emp_id FROM in_prior_claims)';
 
 /** Master Dashboard rows of trainees claimed in Trainer Desk (in sheet order), optionally for one trainer. */
 export function masterRows(trainer) {
