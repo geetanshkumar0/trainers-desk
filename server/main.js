@@ -43,7 +43,7 @@ function status() {
     sync: { lastOk: s.lastOk, lastError: s.lastError, lastMs: s.lastMs, inputs: db.all('SELECT * FROM sync_status ORDER BY name') },
     outbox: outbox.status(),
     mirror: { on: SERVER.mirror, waiting: db.all('SELECT tab, since FROM mirror_dirty') },
-    ojtRefreshed: db.getMeta('ojt_refreshed', null), importedFromSheets: db.getMeta('imported_from_sheets', null),
+    ojtRefreshed: db.getMeta('ojt_refreshed', null), claimed: db.get('SELECT COUNT(*) n FROM claims').n,
     whatsapp: WA_MODE, mail: { configured: G.mailConfigured(), to: SERVER.mailTo || null, override: SERVER.mailOverride || null }
   };
 }
@@ -92,8 +92,6 @@ async function handle(req, res) {
   /* ---- API ---- */
   if (sub.startsWith('/api/')) {
     if (!user) return json(res, 401, { error: 'Please sign in again.', login: true });
-    // Until the existing tabs have been brought into the database, nothing may be saved over them.
-    if (req.method === 'POST' && !SERVER.demo && !db.getMeta('imported_from_sheets', null)) return json(res, 503, { error: 'Trainer Desk is starting up. Try again in a minute.' });
     if (req.method === 'POST' && !/^application\/json/.test(req.headers['content-type'] || '')) return json(res, 415, { error: 'Send JSON.' });
     const m = routes.match(req.method, sub);
     if (!m) return json(res, 404, { error: 'Unknown address ' + sub });
@@ -154,12 +152,8 @@ export function startServer() {
   server.listen(SERVER.port, () => log('Trainer Desk on :' + SERVER.port + ' at ' + SERVER.origin + BASE + '/' + (SERVER.demo ? ' (local preview, made-up data)' : '')));
   outbox.start();
   if (!SERVER.demo) {
-    // First start: read the old app tabs into SQLite (retried until it works), then start the mirror.
-    const settle = async () => {
-      try { await mirror.importFromSheets(); mirror.start(); }
-      catch (e) { log('[import] the old tabs could not be read yet:', e.message, '- trying again in 60 s'); setTimeout(settle, 60000); }
-    };
-    sync.start(SERVER.refreshSeconds).then(settle);
+    // Trainer Desk starts with only its own data: nothing is imported from the old app tabs.
+    sync.start(SERVER.refreshSeconds).then(() => mirror.start());
     ojt.startDaily();
     startBackups();
   }

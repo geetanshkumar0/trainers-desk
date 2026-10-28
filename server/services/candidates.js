@@ -37,7 +37,7 @@ const hrRows = () => db.all('SELECT emp_id empId, name, status, doj, location, s
 export function getUnclaimedCandidates(user) {
   const s = data.session(user);
   if (s.role === 'none') throw new UserError('You do not have access.', 403);
-  data.masterRows('');                           // throws while the sheets are still loading
+  data.liveMasterRows();                         // throws while the sheets are still loading
   const removed = new Set(db.all('SELECT emp_id FROM in_removed').map(r => r.emp_id));
   return buildUnclaimed(hrRows(), mappedIds(), removed, excludedMap(), s.isAdmin, CONFIG.UNCLAIMED_FROM);
 }
@@ -56,12 +56,15 @@ export function assignCandidates(user, req) {
   if (ids.length > CONFIG.MAX_ASSIGN) throw new UserError('Assign at most ' + CONFIG.MAX_ASSIGN + ' candidates at a time.');
   const startIso = String(req.trainingStart || '').trim();
   if (startIso && !isIso(startIso)) throw new UserError('Training start date is not a valid date.');
-  data.masterRows('');
+  data.liveMasterRows();
   return db.tx(() => {
     const inHr = new Set();
     hrRows().forEach(r => { if (!(CONFIG.UNCLAIMED_FROM && (!r.doj || r.doj < CONFIG.UNCLAIMED_FROM))) inHr.add(r.empId); });
     const plan = planAssignment(ids, mappedIds(), inHr, excludedMap());
     outbox.masterAppend(plan.assign.map(empId => ({ empId, trainer, trainingStart: startIso })));
+    const now = new Date().toISOString();
+    plan.assign.forEach(empId => db.run('INSERT INTO claims (emp_id, trainer, claimed_by, claimed_on, training_start) VALUES (?, ?, ?, ?, ?) ON CONFLICT(emp_id) DO NOTHING',
+      empId, trainer, s.email, now, startIso));
     return { trainer, assigned: plan.assign, skipped: plan.skipped };
   });
 }

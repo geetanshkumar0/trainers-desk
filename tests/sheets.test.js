@@ -1,7 +1,8 @@
 /**
  * End-to-end test of everything that talks to Google, against tests/fake-google.js:
- * sync into SQLite, the one-time import of the old tabs, Master Dashboard writes through the outbox
- * (including Google being down), the overlay, the mirror back to the tracker, and the OJT refresh.
+ * sync into SQLite, screens showing only trainees claimed in Trainer Desk, Master Dashboard writes through the outbox
+ * (including Google being down), the overlay, row-by-row writes to the tracker's app tabs (leaving everyone
+ * else's rows alone), and the OJT refresh.
  *   npm test
  */
 import { test } from 'node:test';
@@ -25,6 +26,7 @@ const cand = await import('../server/services/candidates.js');
 const changes = await import('../server/services/changes.js');
 const attendance = await import('../server/services/attendance.js');
 const ojt = await import('../server/services/ojt.js');
+const perf = await import('../server/services/performance.js');
 const { today, addDaysIso } = await import('../server/dates.js');
 const { build } = await import('../preview/fake-data.js');
 
@@ -50,10 +52,15 @@ test('sync copies the tracker into SQLite', async () => {
   assert.ok(db.get('SELECT grid FROM in_grids WHERE name = ?', CONFIG.OJT_TARGETS_SHEET));
 });
 
-test('first start imports the old app tabs, once', async () => {
-  const counts = await mirror.importFromSheets();
-  assert.ok(counts.attendance > 50 && counts.mocks > 10 && counts.changeRequests === 3, JSON.stringify(counts));
-  assert.equal(await mirror.importFromSheets(), null);
+test('nothing from the old tabs is imported: screens start with only Trainer Desk data', () => {
+  assert.equal(db.get('SELECT COUNT(*) n FROM attendance').n + db.get('SELECT COUNT(*) n FROM change_requests').n + db.get('SELECT COUNT(*) n FROM mock_scores').n, 0);
+  assert.deepEqual(cand.getTrainerBatches(TR, TR).batches, []);
+  assert.deepEqual(changes.getNhtCandidates(TR, TR).candidates, []);
+  assert.deepEqual(attendance.getAttendance(TR, TR).trainees, []);
+  assert.deepEqual(changes.getPendingApprovals(ADMIN).pending, [], 'the 3 pending requests in the live tab are not shown');
+  // The Performance Dashboards still use the full live Master Dashboard.
+  const head = perf.getPerformanceOld(ADMIN, '').rows.find(r => r.level === 'head');
+  assert.ok(head.E > 100, 'live hires counted: ' + head.E);
 });
 
 test('a claim is saved locally, then written to Master Dashboard (adding rows)', async () => {
@@ -74,6 +81,14 @@ test('a claim is saved locally, then written to Master Dashboard (adding rows)',
   assert.ok(fake.tab('TRACKER', 'Master Dashboard').rows >= g.length, 'grid was extended');
   // The same people cannot be claimed twice.
   assert.equal(cand.assignCandidates(TR, { ids: pick, trainer: TR }).assigned.length, 0);
+  // They show up in Batches, Attendance and Active NHT Details; nobody else does.
+  const ids = new Set(pick);
+  assert.deepEqual(cand.getTrainerBatches(TR, TR).batches.flatMap(b => b.trainees.map(t => t.empId)).sort(), [...pick].sort());
+  assert.ok(changes.getNhtCandidates(TR, TR).candidates.every(c => ids.has(c.empId)) && changes.getNhtCandidates(TR, TR).candidates.length === 2);
+  assert.equal(attendance.getAttendance(TR, TR).trainees.length, 2);
+  // For the rest of the tests: Aditi's other trainees count as claimed in Trainer Desk earlier.
+  db.run("INSERT OR IGNORE INTO claims (emp_id, trainer, claimed_by, claimed_on) SELECT emp_id, trainer, trainer, '2026-10-01' FROM in_master WHERE trainer = ?", TR);
+  assert.deepEqual(cand.getTrainerBatches(ADMIN, 'karthik.menon@nobroker.in').batches, [], 'other trainers: still nothing claimed');
 });
 
 test('master writes survive Google being down, and the overlay keeps them visible', async () => {
@@ -154,44 +169,48 @@ test('a final Pass stays in Active NHT Details until OJT Entered and OJT Eligibl
   mirror.stop();
 });
 
-test('people already in OJT before the new rule stay there', () => {
-  // Their final mock Pass came before the rule, so they are not pulled back into Active NHT Details.
-  const before = db.all("SELECT emp_id FROM mock_scores WHERE final = 1 AND status = 'Pass' AND approved_on < ?", db.getMeta('ojt_answer_rule_since', '')).map(r => r.emp_id);
-  assert.ok(before.length > 5);
-  const nht = new Set(changes.getNhtCandidates(ADMIN, TR).candidates.map(x => x.empId));
-  assert.ok(before.every(id => !nht.has(id)));
-});
+test('the tracker tabs get Trainer Desk rows added or changed, and nobody else\'s rows are touched', async () => {
+  const grid = n => fake.tab('TRACKER', n).grid;
+  const snapshot = n => JSON.stringify(grid(n).filter((r, i) => i && !tdIds.has(String(r[0]).toUpperCase())));
+  const tdIds = new Set(db.all('SELECT emp_id FROM claims').map(r => r.emp_id));
+  const liveMocks = snapshot('Mock Scores'), liveRequests = snapshot('Change Requests');
+  // Attendance: everyone else's marks, by person and date.
+  const marksBy = () => { const g = grid('Attendance'), out = {}; g.slice(1).forEach(r => { if (!tdIds.has(r[0])) g[0].forEach((d, i) => { if (i >= 4 && r[i]) out[r[0] + '|' + d] = r[i]; }); }); return out; };
+  const liveMarks = marksBy();
+  assert.ok(Object.keys(liveMarks).length > 100);
 
-test('the mirror copies app tabs back, and they read back the same', async () => {
-  const t = attendance.getAttendance(TR, TR).trainees.find(x => x.doj <= today() && x.trackUntil >= today());
-  attendance.saveAttendance(ADMIN, { trainer: TR, days: [{ date: today(), marks: { [t.empId]: 'WO' } }] });
-  const done = await mirror.mirrorNow();
-  assert.ok(done.includes('Attendance') && done.includes('Attendance Log'), done.join());
-  assert.equal(db.get('SELECT COUNT(*) n FROM mirror_dirty').n, 0);
-  const grid = fake.tab('TRACKER', 'Attendance').grid;
-  const dcol = grid[0].indexOf(today());
-  assert.equal(grid.find(r => r[0] === t.empId)[dcol], 'WO');
-  // Written in place: a tab that gets shorter is blanked below, never left with old rows.
+  const t = attendance.getAttendance(TR, TR).trainees.find(x => x.doj <= addDaysIso(today(), -20) && x.trackUntil >= today());
+  const early = addDaysIso(today(), -20);                       // before every existing date column: a new first column
+  attendance.saveAttendance(ADMIN, { trainer: TR, days: [{ date: today(), marks: { [t.empId]: 'WO' } }, { date: early, marks: { [t.empId]: 'P' } }] });
+  await mirror.mirrorNow();
+  const g = grid('Attendance'), row = g.find(r => r[0] === t.empId);
+  assert.equal(row[g[0].indexOf(today())], 'WO');
+  assert.equal(row[g[0].indexOf(early)], 'P');
+  assert.equal(g[0].indexOf(early), 4, 'new date column placed in date order');
+  assert.deepEqual(marksBy(), liveMarks, 'other people\'s marks unchanged and still under the right dates');
+  assert.equal(snapshot('Mock Scores'), liveMocks);
+  assert.equal(snapshot('Change Requests'), liveRequests);
+  assert.ok(grid('Mock Scores').some(r => tdIds.has(r[0])), 'Trainer Desk mocks added');
+  assert.ok(fake.tab('TRACKER', 'Attendance Log').grid.length >= 3, 'log tab created and appended');
+
+  // Changing a record changes its row in place; nothing is written twice.
+  const before = grid('Attendance').length;
+  attendance.saveAttendance(ADMIN, { trainer: TR, days: [{ date: today(), marks: { [t.empId]: 'L' } }] });
+  await mirror.mirrorNow();
+  assert.equal(grid('Attendance').length, before);
+  assert.equal(grid('Attendance').filter(r => r[0] === t.empId).length, 1);
+  assert.equal(grid('Attendance').find(r => r[0] === t.empId)[grid('Attendance')[0].indexOf(today())], 'L');
+  assert.deepEqual(await mirror.mirrorNow(), [], 'nothing left to write');
+
+  // Removing: only Trainer Desk's own row goes.
   const two = cand.getUnclaimedCandidates(ADMIN).slice(0, 2).map(x => x.empId);
   cand.excludeCandidates(ADMIN, { ids: two, reason: 'test' });
   await mirror.mirrorNow();
-  assert.equal(fake.tab('TRACKER', 'Excluded Candidates').grid.filter(r => two.includes(r[0])).length, 2);
+  assert.equal(grid('Excluded Candidates').filter(r => two.includes(r[0])).length, 2);
   cand.restoreCandidates(ADMIN, { ids: [two[0]] });
   await mirror.mirrorNow();
-  const ex = fake.tab('TRACKER', 'Excluded Candidates').grid;
-  assert.equal(ex.filter(r => r[0] === two[1]).length, 1);
-  assert.equal(ex.filter(r => r[0] === two[0]).length, 0, 'the restored row is gone, not left behind');
-  assert.ok(fake.tab('TRACKER', 'Attendance Log'), 'new tab created');
-  // Round trip: what the mirror wrote imports into an empty database as the same data.
-  const before = { att: db.get('SELECT COUNT(*) n FROM attendance').n, cr: db.get('SELECT COUNT(*) n FROM change_requests').n, mk: db.get('SELECT COUNT(*) n FROM mock_scores').n };
-  const grids = {};
-  Object.keys(mirror.TABS).forEach(n => { const x = fake.tab('TRACKER', n); if (x) grids[n] = x.grid; });
-  db.close();
-  db.open(path.join(dir, 'second.db'));
-  const counts = mirror.importGrids(grids, 'en_US');
-  assert.deepEqual({ att: counts.attendance, cr: counts.changeRequests, mk: counts.mocks }, before);
-  db.close();
-  db.open(SERVER.dbFile);
+  assert.deepEqual(grid('Excluded Candidates').filter(r => two.includes(r[0])).map(r => r[0]), [two[1]]);
+  assert.equal(db.get('SELECT COUNT(*) n FROM mirror_dirty').n, 0);
 });
 
 test('the OJT refresh reads Talktime and the dumps from Google', async () => {

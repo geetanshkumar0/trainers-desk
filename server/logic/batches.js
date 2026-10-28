@@ -107,7 +107,7 @@ export function applyTracking(trainees, ojtMap, fallbackDays) {
 
 /**
  * Where a trainee stands after training. stage: { status: { empId: { entered, eligible } }, finalMock: { empId: { status, date } } }
- *   'ojt'  OJT Entered and OJT Eligible are both Yes (or, for trainees from before Trainer Desk, a final mock Pass in the sheet)
+ *   'ojt'  OJT Entered and OJT Eligible are both Yes (or a final mock Pass filled in the sheet rather than in Trainer Desk)
  *   'done' training ended without moving to OJT (final mock Fail), or the training end date came from the sheet
  *   'nht'  still in training, including a final mock Pass that is waiting for the OJT answers
  */
@@ -116,7 +116,7 @@ export function nhtStage(row, stage) {
   const fin = stage && stage.finalMock && stage.finalMock[row.empId];
   if (st.entered === 'Yes' && st.eligible === 'Yes') return 'ojt';
   if (fin) return fin.status === 'Pass' ? 'nht' : 'done';
-  if (row.trainingEnd) return norm(row.mockStatus) === 'pass' ? 'ojt' : 'done';   // ended before Trainer Desk recorded mocks
+  if (row.trainingEnd) return norm(row.mockStatus) === 'pass' ? 'ojt' : 'done';   // final mock filled in the sheet, not in Trainer Desk
   return 'nht';
 }
 

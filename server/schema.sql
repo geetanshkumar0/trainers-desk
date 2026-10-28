@@ -4,7 +4,7 @@
 -- Two kinds of table:
 --   in_*   inputs copied from Google Sheets. The sync replaces their contents; never edit them here.
 --   others owned by Trainer Desk. This database is the only place they are kept
---          (a read-only copy goes back to the tracker for reporting when SHEET_MIRROR is on).
+--          (their rows are also written into the tracker's app tabs when SHEET_MIRROR is on; see mirror.js).
 
 PRAGMA foreign_keys = ON;
 
@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS sync_status (name TEXT PRIMARY KEY, rows INTEGER, loa
 /* ================================================================== */
 /* Owned by Trainer Desk                                              */
 /* ================================================================== */
+
+-- Everyone claimed through Trainer Desk. Batches, Attendance, Active NHT Details, OJT Performance and Approvals
+-- only show these people; the rest of Master Dashboard is used only by the Performance Dashboards.
+CREATE TABLE IF NOT EXISTS claims (
+  emp_id TEXT PRIMARY KEY, trainer TEXT NOT NULL, claimed_by TEXT NOT NULL, claimed_on TEXT NOT NULL, training_start TEXT NOT NULL DEFAULT ''
+);
 
 CREATE TABLE IF NOT EXISTS excluded_candidates (
   emp_id TEXT PRIMARY KEY,
@@ -201,3 +207,5 @@ CREATE INDEX IF NOT EXISTS outbox_state ON outbox (state, id);
 
 -- App tabs changed since they were last copied back to the tracker.
 CREATE TABLE IF NOT EXISTS mirror_dirty (tab TEXT PRIMARY KEY, since TEXT NOT NULL);
+-- Rows Trainer Desk has written into each tracker tab (so it only ever changes or removes its own rows).
+CREATE TABLE IF NOT EXISTS mirror_rows (tab TEXT NOT NULL, key TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (tab, key));

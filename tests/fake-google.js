@@ -92,6 +92,15 @@ export function install() {
           else if (q.appendDimension) {
             const t = book.tabs.find(x => x.sheetId === q.appendDimension.sheetId);
             if (q.appendDimension.dimension === 'ROWS') t.rows += q.appendDimension.length; else t.cols += q.appendDimension.length;
+          } else if (q.insertDimension || q.deleteDimension) {
+            const d = q.insertDimension || q.deleteDimension, t = book.tabs.find(x => x.sheetId === d.range.sheetId), n = d.range.endIndex - d.range.startIndex;
+            if (d.range.dimension === 'COLUMNS') {
+              t.grid.forEach(r => { if (q.insertDimension) { while (r.length < d.range.startIndex) r.push(''); r.splice(d.range.startIndex, 0, ...new Array(n).fill('')); } else r.splice(d.range.startIndex, n); });
+              t.cols += q.insertDimension ? n : -n;
+            } else {
+              if (q.insertDimension) t.grid.splice(d.range.startIndex, 0, ...Array.from({ length: n }, () => [])); else t.grid.splice(d.range.startIndex, n);
+              t.rows += q.insertDimension ? n : -n;
+            }
           } else throw new Error('fake-google: unsupported request ' + Object.keys(q)[0]);
         });
         return respond(200, {});

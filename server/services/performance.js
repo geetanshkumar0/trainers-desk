@@ -1,4 +1,4 @@
-/** Performance Dashboards (Old and New). */
+/** Performance Dashboards (Old and New): the only screens that use the full live Master Dashboard. */
 import * as db from '../db.js';
 import * as data from '../data.js';
 import { CONFIG } from '../config.js';
@@ -19,7 +19,7 @@ export function getPerformanceOld(user, month) {
   const s = data.session(user);
   if (s.role === 'none') throw new UserError('You do not have access.', 403);
   month = isMonth(month) ? month : '';
-  const view = tdBuildView(tdPrepare(data.masterRows('')), bq(), data.org(), s, month, CONFIG.HEAD_EMAILS);
+  const view = tdBuildView(tdPrepare(data.liveMasterRows()), bq(), data.org(), s, month, CONFIG.HEAD_EMAILS);
   view.months = months();
   view.today = today();
   return view;
@@ -31,7 +31,7 @@ export function getPerformanceNew(user, month) {
   if (s.role === 'none') throw new UserError('You do not have access.', 403);
   month = isMonth(month) ? month : '';
   const day = today();
-  const view = ncBuildView(tdPrepare(data.masterRows('')), data.org(), s, month, CONFIG.HEAD_EMAILS, day);
+  const view = ncBuildView(tdPrepare(data.liveMasterRows()), data.org(), s, month, CONFIG.HEAD_EMAILS, day);
   view.months = months();
   view.today = day;
   return view;

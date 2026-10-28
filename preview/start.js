@@ -20,7 +20,7 @@ process.env.PUBLIC_ORIGIN = 'http://localhost:' + process.env.PORT;
 const { SERVER } = await import('../server/config.js');
 const db = await import('../server/db.js');
 const sync = await import('../server/sync.js');
-const mirror = await import('../server/mirror.js');
+const seed = await import('../server/seed.js');
 const ojt = await import('../server/services/ojt.js');
 const { today } = await import('../server/dates.js');
 const fake = await import('./fake-data.js');
@@ -30,7 +30,12 @@ const data = fake.build(today());
 sync.ingestTracker(data.tracker, 'en_US', new Date().toISOString());
 sync.ingestTargets(data.targets.values, data.targets.display);
 sync.ingestDumps(data.talk, {}, 'en_US');
-mirror.importGrids(data.appTabs, 'en_US');          // same path the live server uses for the old tabs
+// Made-up history so every screen has something to show: these trainees count as claimed in Trainer Desk.
+seed.importGrids(data.appTabs, 'en_US');
+db.run(`INSERT OR IGNORE INTO nht_status (emp_id, name, trainer, ojt_entered, ojt_eligible, updated_by, updated_on)
+  SELECT emp_id, name, trainer, 'Yes', 'Yes', entered_by, approved_on FROM mock_scores WHERE final = 1 AND status = 'Pass'`);
+db.all('SELECT emp_id, trainer, training_start FROM in_master').forEach(r => db.run(
+  'INSERT OR IGNORE INTO claims (emp_id, trainer, claimed_by, claimed_on, training_start) VALUES (?, ?, ?, ?, ?)', r.emp_id, r.trainer, r.trainer, new Date().toISOString(), r.training_start));
 ojt.buildOjtDashboard([]);
 db.close();
 

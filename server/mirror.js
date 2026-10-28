@@ -1,101 +1,232 @@
 /**
- * The tabs Trainer Desk used to write in the tracker (Attendance, Change Requests, Mock Scores, ...).
- *  - importFromSheets(): one time, on the first start, copies what those tabs hold into SQLite.
- *  - mirror: afterwards, keeps a read-only copy of each tab in the tracker (same columns as before) for anyone
- *    reporting from the sheet. Turn it off with SHEET_MIRROR=off. Edits made in those tabs are overwritten.
+ * Writes Trainer Desk's records into the tracker's app tabs (Attendance, Change Requests, Mock Scores, NHT Status, ...),
+ * a few seconds after each save, in the same columns as before.
+ *
+ * Only Trainer Desk's own rows are touched: each record is added as a new row or changed in place, and a record that
+ * no longer exists (a restored candidate, say) has its row removed. Every other row in those tabs stays exactly as it
+ * is. mirror_rows remembers which rows Trainer Desk wrote, so nothing is written twice. Turn it off with SHEET_MIRROR=off.
  */
 import * as db from './db.js';
 import * as G from './google.js';
 import { CONFIG, SERVER } from './config.js';
 import { parseSheetDate, tzParts } from './dates.js';
-import { normId, norm, text } from './logic/common.js';
 
 const log = (...a) => console.log(new Date().toISOString(), '[mirror]', ...a);
 const pad = n => String(n).padStart(2, '0');
 /** ISO timestamp -> 'yyyy-MM-dd HH:mm:ss' in the sheet time zone (the sheet reads it as a date-time). */
 const when = iso => { if (!iso) return ''; const p = tzParts(new Date(iso)); return p.y + '-' + pad(p.m) + '-' + pad(p.d) + ' ' + pad(p.h) + ':' + pad(p.mi) + ':' + pad(p.s); };
 const blank = v => (v === null || v === undefined ? '' : v);
+const K = v => String(v == null ? '' : v).trim().toUpperCase();
 
-/** Tab name -> () => grid (header first). Column layouts match what Code.gs wrote. */
+/**
+ * Each tab: its header, which columns identify a row (keyCols), and Trainer Desk's rows as [values].
+ * appendOnly tabs (logs) only ever get new rows at the bottom.
+ */
 export const TABS = {
-  'Excluded Candidates': () => [['Emp ID', 'Employee Name', 'Department', 'DOJ', 'Reason', 'Removed By', 'Removed On']]
-    .concat(db.all('SELECT * FROM excluded_candidates ORDER BY removed_on').map(r => [r.emp_id, r.name, r.department, r.doj, r.reason, r.removed_by, when(r.removed_on)])),
-  'Attendance': () => {
-    const rows = db.all('SELECT * FROM attendance ORDER BY emp_id, date');
-    const dates = [...new Set(rows.map(r => r.date))].sort();
-    const col = {}; dates.forEach((d, i) => { col[d] = 4 + i; });
-    const people = {}, order = [];
-    rows.forEach(r => {
-      if (!people[r.emp_id]) { people[r.emp_id] = [r.emp_id, r.name, r.trainer, r.doj].concat(dates.map(() => '')); order.push(r.emp_id); }
-      people[r.emp_id][col[r.date]] = r.code;
-    });
-    return [['Emp ID', 'Employee Name', 'Trainer', 'DOJ'].concat(dates)].concat(order.map(id => people[id]));
-  },
-  'Attendance Log': () => [['Changed On', 'Changed By', 'Trainer', 'Emp ID', 'Attendance Date', 'Old Mark', 'New Mark']]
-    .concat(db.all('SELECT * FROM attendance_log ORDER BY id').map(r => [when(r.changed_on), r.changed_by, r.trainer, r.emp_id, r.date, r.old_code, r.new_code])),
-  'Change Requests': () => [['Request ID', 'Requested On', 'Requested By', 'Trainer', 'Emp ID', 'Employee Name', 'Change', 'Old Value', 'New Value',
-    'Status', 'Reviewed By', 'Reviewed On', 'Review Note', 'Data']]
-    .concat(db.all('SELECT * FROM change_requests ORDER BY seq').map(r => [r.id, when(r.requested_on), r.requested_by, r.trainer, r.emp_id, r.name, r.field,
-      r.old_text, r.new_text, r.status, r.reviewed_by, when(r.reviewed_on), r.note, r.data])),
-  'Mock Scores': () => [['Emp ID', 'Employee Name', 'Trainer', 'Mock Date', 'Attempt', 'Score %', 'Status', 'Final Attempt', 'Entered By', 'Approved By', 'Approved On']]
-    .concat(db.all('SELECT * FROM mock_scores ORDER BY id').map(r => [r.emp_id, r.name, r.trainer, r.mock_date, r.attempt, blank(r.score), r.status,
-      r.final ? 'Yes' : 'No', r.entered_by, r.approved_by, when(r.approved_on)])),
-  'NHT Status': () => [['Emp ID', 'Employee Name', 'Trainer', 'OJT Entered', 'OJT Eligible', 'Updated By', 'Updated On']]
-    .concat(db.all('SELECT * FROM nht_status ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.ojt_entered, r.ojt_eligible, r.updated_by, when(r.updated_on)])),
-  'OJT Team': () => [['Emp ID', 'Employee Name', 'Trainer', 'OJT Team', 'Updated By', 'Updated On']]
-    .concat(db.all('SELECT * FROM ojt_team ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.team, r.updated_by, when(r.updated_on)])),
-  'OJT Manual Inputs': () => [['Emp ID', 'Employee Name', 'Trainer', 'Metric', 'Achieved', 'Updated By', 'Updated On']]
-    .concat(db.all('SELECT * FROM ojt_manual_inputs ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.metric, r.achieved, r.updated_by, when(r.updated_on)])),
-  'OJT Dashboard': () => [['Emp ID', 'Employee Name', 'Trainer', 'Work Mode', 'DOJ', 'Training End Date', 'OJT Start Date', 'OJT End Date',
+  'Excluded Candidates': { header: ['Emp ID', 'Employee Name', 'Department', 'DOJ', 'Reason', 'Removed By', 'Removed On'], keyCols: [0],
+    rows: () => db.all('SELECT * FROM excluded_candidates ORDER BY removed_on').map(r => [r.emp_id, r.name, r.department, r.doj, r.reason, r.removed_by, when(r.removed_on)]) },
+  'Attendance Log': { header: ['Changed On', 'Changed By', 'Trainer', 'Emp ID', 'Attendance Date', 'Old Mark', 'New Mark'], appendOnly: true,
+    rows: () => db.all('SELECT * FROM attendance_log ORDER BY id').map(r => ({ key: 'log#' + r.id, values: [when(r.changed_on), r.changed_by, r.trainer, r.emp_id, r.date, r.old_code, r.new_code] })) },
+  'Change Requests': { header: ['Request ID', 'Requested On', 'Requested By', 'Trainer', 'Emp ID', 'Employee Name', 'Change', 'Old Value', 'New Value',
+    'Status', 'Reviewed By', 'Reviewed On', 'Review Note', 'Data'], keyCols: [0],
+    rows: () => db.all('SELECT * FROM change_requests ORDER BY seq').map(r => [r.id, when(r.requested_on), r.requested_by, r.trainer, r.emp_id, r.name, r.field,
+      r.old_text, r.new_text, r.status, r.reviewed_by, when(r.reviewed_on), r.note, r.data]) },
+  'Mock Scores': { header: ['Emp ID', 'Employee Name', 'Trainer', 'Mock Date', 'Attempt', 'Score %', 'Status', 'Final Attempt', 'Entered By', 'Approved By', 'Approved On'], keyCols: [0, 4],
+    rows: () => db.all('SELECT * FROM mock_scores ORDER BY id').map(r => [r.emp_id, r.name, r.trainer, r.mock_date, r.attempt, blank(r.score), r.status,
+      r.final ? 'Yes' : 'No', r.entered_by, r.approved_by, when(r.approved_on)]) },
+  'NHT Status': { header: ['Emp ID', 'Employee Name', 'Trainer', 'OJT Entered', 'OJT Eligible', 'Updated By', 'Updated On'], keyCols: [0],
+    rows: () => db.all('SELECT * FROM nht_status ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.ojt_entered, r.ojt_eligible, r.updated_by, when(r.updated_on)]) },
+  'OJT Team': { header: ['Emp ID', 'Employee Name', 'Trainer', 'OJT Team', 'Updated By', 'Updated On'], keyCols: [0],
+    rows: () => db.all('SELECT * FROM ojt_team ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.team, r.updated_by, when(r.updated_on)]) },
+  'OJT Manual Inputs': { header: ['Emp ID', 'Employee Name', 'Trainer', 'Metric', 'Achieved', 'Updated By', 'Updated On'], keyCols: [0, 3],
+    rows: () => db.all('SELECT * FROM ojt_manual_inputs ORDER BY updated_on').map(r => [r.emp_id, r.name, r.trainer, r.metric, r.achieved, r.updated_by, when(r.updated_on)]) },
+  // Rebuilt by every OJT refresh; the Updated On column is left out of the comparison so an unchanged trainee is not rewritten.
+  'OJT Dashboard': { header: ['Emp ID', 'Employee Name', 'Trainer', 'Work Mode', 'DOJ', 'Training End Date', 'OJT Start Date', 'OJT End Date',
     'OJT Status', 'OJT Day', 'Talktime Days', 'Total Talktime (hrs)', 'Last Talktime Date', 'Updated On',
-    'OJT Team', 'Team Picked By Trainer', 'Achievement %', 'OJT Score', 'OJT Result', 'Pass Rule', 'Data Note']]
-    .concat(db.all('SELECT * FROM ojt_dashboard ORDER BY seq').map(r => [r.emp_id, r.name, r.trainer, r.work_mode, r.doj, r.training_end, r.ojt_start, r.ojt_end,
+    'OJT Team', 'Team Picked By Trainer', 'Achievement %', 'OJT Score', 'OJT Result', 'Pass Rule', 'Data Note'], keyCols: [0], ignoreCols: [13],
+    rows: () => db.all('SELECT * FROM ojt_dashboard ORDER BY seq').map(r => [r.emp_id, r.name, r.trainer, r.work_mode, r.doj, r.training_end, r.ojt_start, r.ojt_end,
       r.status, r.ojt_day || '', r.talk_days, r.talk_hours, r.last_talk, when(r.updated_on), r.team, r.team_set ? 'Yes' : '', blank(r.achievement), blank(r.score),
-      r.result, r.pass_rule, r.note])),
-  'OJT Performance': () => [['Emp ID', 'Employee Name', 'Trainer', 'OJT Team', 'Metric', 'Type', 'Weight', 'Kind', 'Target', 'Achieved', 'Achieved %',
-    'Score', 'From', 'To', 'Data', 'W1 Target', 'W1 Achieved', 'W2 Target', 'W2 Achieved', 'W3 Target', 'W3 Achieved', 'W4 Target', 'W4 Achieved']]
-    .concat(db.all('SELECT * FROM ojt_performance ORDER BY seq').map(r => {
+      r.result, r.pass_rule, r.note]) },
+  'OJT Performance': { header: ['Emp ID', 'Employee Name', 'Trainer', 'OJT Team', 'Metric', 'Type', 'Weight', 'Kind', 'Target', 'Achieved', 'Achieved %',
+    'Score', 'From', 'To', 'Data', 'W1 Target', 'W1 Achieved', 'W2 Target', 'W2 Achieved', 'W3 Target', 'W3 Achieved', 'W4 Target', 'W4 Achieved'], keyCols: [0, 4],
+    rows: () => db.all('SELECT * FROM ojt_performance ORDER BY seq').map(r => {
       const w = JSON.parse(r.weeks || '[]');
       return [r.emp_id, r.name, r.trainer, r.team, r.metric, r.type, blank(r.weight), r.kind, blank(r.target), blank(r.achieved), blank(r.pct), blank(r.score),
         r.date_from, r.date_to, r.data].concat([0, 1, 2, 3].flatMap(k => [blank((w[k] || {}).target), blank((w[k] || {}).achieved)]));
-    })),
-  'WhatsApp Log': () => [['Sent On', 'Trainer', 'Emp ID', 'Candidate', 'Candidate Phone', 'Sent To', 'Template', 'Status', 'Detail']]
-    .concat(db.all('SELECT * FROM whatsapp_log ORDER BY id').map(r => [when(r.sent_on), r.trainer, r.emp_id, r.candidate, r.candidate_phone, r.sent_to, r.template, r.status, r.detail]))
+    }) },
+  'WhatsApp Log': { header: ['Sent On', 'Trainer', 'Emp ID', 'Candidate', 'Candidate Phone', 'Sent To', 'Template', 'Status', 'Detail'], appendOnly: true,
+    rows: () => db.all('SELECT * FROM whatsapp_log ORDER BY id').map(r => ({ key: 'wa#' + r.id, values: [when(r.sent_on), r.trainer, r.emp_id, r.candidate, r.candidate_phone, r.sent_to, r.template, r.status, r.detail] })) },
+  'Attendance': { attendance: true }
 };
 
 const colLetter = c => { let s = ''; while (c > 0) { const m = (c - 1) % 26; s = String.fromCharCode(65 + m) + s; c = Math.floor((c - 1) / 26); } return s; };
+const hashOf = v => JSON.stringify(v);
+
+/** Trainer Desk's rows for a tab: Map key -> { values, hash }. */
+function desired(spec) {
+  const out = new Map();
+  spec.rows().forEach(r => {
+    const values = Array.isArray(r) ? r : r.values;
+    const key = Array.isArray(r) ? spec.keyCols.map(i => K(values[i])).join('|') : r.key;
+    const cmp = spec.ignoreCols ? values.filter((v, i) => !spec.ignoreCols.includes(i)) : values;
+    out.set(key, { values: values.map(v => blank(v)), hash: hashOf(cmp) });
+  });
+  return out;
+}
+function written(tab) { const m = new Map(); db.all('SELECT key, hash FROM mirror_rows WHERE tab = ?', tab).forEach(r => m.set(r.key, r.hash)); return m; }
+function remember(tab, key, hash) {
+  if (hash === null) db.run('DELETE FROM mirror_rows WHERE tab = ? AND key = ?', tab, key);
+  else db.run('INSERT INTO mirror_rows (tab, key, hash) VALUES (?, ?, ?) ON CONFLICT(tab, key) DO UPDATE SET hash = excluded.hash', tab, key, hash);
+}
+
+/** The tab's sheet properties, creating the tab (with its header) when it is missing. */
+async function ensureTab(meta, name, header) {
+  let p = (meta.sheets.find(s => s.properties.title === name) || {}).properties;
+  if (p) return p;
+  await G.sheetsBatchUpdate(CONFIG.TRACKER_ID, [{ addSheet: { properties: { title: name, gridProperties: { frozenRowCount: 1, rowCount: 200, columnCount: Math.max(header.length, 26) } } } }]);
+  await G.sheetsWrite(CONFIG.TRACKER_ID, [{ range: G.quoteTab(name) + '!A1', values: [header] }]);
+  const fresh = await G.sheetsMeta(CONFIG.TRACKER_ID);
+  meta.sheets = fresh.sheets;
+  return meta.sheets.find(s => s.properties.title === name).properties;
+}
+
+/** Makes sure the grid has at least rows x cols cells. */
+async function ensureSize(p, rows, cols) {
+  const need = [];
+  if (p.gridProperties.rowCount < rows) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'ROWS', length: rows - p.gridProperties.rowCount + 100 } });
+  if (p.gridProperties.columnCount < cols) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'COLUMNS', length: cols - p.gridProperties.columnCount } });
+  if (!need.length) return;
+  await G.sheetsBatchUpdate(CONFIG.TRACKER_ID, need);
+  if (p.gridProperties.rowCount < rows) p.gridProperties.rowCount = rows + 100;
+  if (p.gridProperties.columnCount < cols) p.gridProperties.columnCount = cols;
+}
+
+/** Deletes sheet rows (1-based numbers), bottom first so the numbers stay right. */
+async function deleteRows(p, nums) {
+  if (!nums.length) return;
+  const req = [...nums].sort((a, b) => b - a).map(n => ({ deleteDimension: { range: { sheetId: p.sheetId, dimension: 'ROWS', startIndex: n - 1, endIndex: n } } }));
+  await G.sheetsBatchUpdate(CONFIG.TRACKER_ID, req);
+  p.gridProperties.rowCount -= nums.length;
+}
+const shiftAfter = (n, deleted) => n - deleted.filter(d => d < n).length;
+
+/** One ordinary tab: add, change or remove only Trainer Desk's rows. Returns how many rows changed. */
+async function syncTab(meta, name, spec) {
+  const want = desired(spec), had = written(name);
+  const changed = [...want].filter(([k, r]) => had.get(k) !== r.hash);
+  const gone = [...had.keys()].filter(k => !want.has(k));
+  if (!changed.length && !gone.length) return 0;
+  const id = CONFIG.TRACKER_ID, tab = G.quoteTab(name);
+  const p = await ensureTab(meta, name, spec.header);
+  const width = spec.header.length;
+
+  if (spec.appendOnly) {
+    const [colA] = await G.sheetsValues(id, [tab + '!A:A']);
+    const fresh = changed.filter(([k]) => !had.has(k));
+    if (fresh.length) {
+      const first = Math.max(colA.length, 1) + 1;
+      await ensureSize(p, first + fresh.length, width);
+      await G.sheetsWrite(id, [{ range: tab + '!A' + first, values: fresh.map(([, r]) => r.values) }]);
+    }
+    fresh.forEach(([k, r]) => remember(name, k, r.hash));
+    gone.forEach(k => remember(name, k, null));
+    return fresh.length;
+  }
+
+  const [grid] = await G.sheetsValues(id, [tab]);
+  const rowOf = new Map();
+  grid.forEach((r, i) => { if (!i) return; const k = spec.keyCols.map(c => K(r[c])).join('|'); if (k.replace(/\|/g, '') && !rowOf.has(k)) rowOf.set(k, i + 1); });
+  const data = [];
+  if (!grid.length || !(grid[0] || []).some(v => String(v).trim())) data.push({ range: tab + '!A1', values: [spec.header] });
+
+  const del = gone.map(k => rowOf.get(k)).filter(Boolean);
+  await deleteRows(p, del);
+  let last = 1;
+  grid.forEach((r, i) => { if (r.some(v => String(v).trim())) last = i + 1; });
+  last = Math.max(1, shiftAfter(last + 1, del) - 1);
+  const add = [];
+  changed.forEach(([k, r]) => {
+    const at = rowOf.get(k);
+    if (at) data.push({ range: tab + '!A' + shiftAfter(at, del), values: [r.values] });
+    else add.push(r.values);
+  });
+  if (add.length) data.push({ range: tab + '!A' + (last + 1), values: add });
+  await ensureSize(p, last + 1 + add.length, width);
+  if (data.length) await G.sheetsWrite(id, data);
+  changed.forEach(([k, r]) => remember(name, k, r.hash));
+  gone.forEach(k => remember(name, k, null));
+  return changed.length + gone.length;
+}
 
 /**
- * Writes one tab: creates it if needed, writes the grid over what is there (rows are added or changed in place),
- * then blanks whatever is left below or to the right of it. The tab is never emptied first, so nobody sees it blank.
+ * Attendance: one row per trainee, one column per date from column E. New dates get a column in date order;
+ * Trainer Desk writes the rows of its own trainees only.
  */
-async function writeTab(meta, name, grid) {
-  const id = CONFIG.TRACKER_ID, tab = G.quoteTab(name);
-  const width = Math.max(...grid.map(r => r.length));
-  const rows = grid.map(r => { const a = r.map(v => (v === null || v === undefined ? '' : v)); while (a.length < width) a.push(''); return a; });
-  let p = (meta.sheets.find(s => s.properties.title === name) || {}).properties;
-  if (!p) {
-    await G.sheetsBatchUpdate(id, [{ addSheet: { properties: { title: name, gridProperties: { frozenRowCount: 1, rowCount: Math.max(rows.length + 50, 100), columnCount: Math.max(width, 26) } } } }]);
-  } else {
-    const need = [];
-    if (p.gridProperties.rowCount < rows.length) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'ROWS', length: rows.length - p.gridProperties.rowCount + 50 } });
-    if (p.gridProperties.columnCount < width) need.push({ appendDimension: { sheetId: p.sheetId, dimension: 'COLUMNS', length: width - p.gridProperties.columnCount } });
-    if (need.length) { await G.sheetsBatchUpdate(id, need); meta.stale = true; }
+async function syncAttendance(meta) {
+  const name = 'Attendance', id = CONFIG.TRACKER_ID, tab = G.quoteTab(name);
+  const people = new Map();
+  db.all('SELECT * FROM attendance ORDER BY emp_id, date').forEach(r => {
+    const p = people.get(r.emp_id) || { base: [r.emp_id, r.name, r.trainer, r.doj], marks: {} };
+    p.marks[r.date] = r.code;
+    people.set(r.emp_id, p);
+  });
+  const had = written(name);
+  const changed = [...people].filter(([k, v]) => had.get(k) !== hashOf(v));
+  const gone = [...had.keys()].filter(k => !people.has(k));
+  if (!changed.length && !gone.length) return 0;
+  const p = await ensureTab(meta, name, ['Emp ID', 'Employee Name', 'Trainer', 'DOJ']);
+  const locale = db.getMeta('locale', 'en_US');
+  const read = async () => (await G.sheetsValues(id, [tab]))[0];
+  let grid = await read();
+  const headIso = () => (grid[0] || []).map((v, i) => (i >= 4 ? parseSheetDate(v, locale) : ''));
+
+  // 1. A column for every date Trainer Desk has marks on, kept in date order.
+  const dates = [...new Set(changed.flatMap(([, v]) => Object.keys(v.marks)))].sort();
+  let head = headIso(), inserted = false;
+  for (const d of dates) {
+    if (head.indexOf(d) >= 0) continue;
+    let slot = head.length;
+    for (let i = 4; i < head.length; i++) { if (head[i] && head[i] > d) { slot = i; break; } }
+    slot = Math.max(slot, 4);
+    if (slot < head.length) {
+      await G.sheetsBatchUpdate(id, [{ insertDimension: { range: { sheetId: p.sheetId, dimension: 'COLUMNS', startIndex: slot, endIndex: slot + 1 }, inheritFromBefore: true } }]);
+      p.gridProperties.columnCount++;
+    } else await ensureSize(p, 1, slot + 1);
+    await G.sheetsWrite(id, [{ range: tab + '!' + colLetter(slot + 1) + '1', values: [[d]] }]);
+    head.splice(slot, 0, d);
+    inserted = true;
   }
-  for (let i = 0; i < rows.length; i += 5000) await G.sheetsWrite(id, [{ range: tab + '!A' + (i + 1), values: rows.slice(i, i + 5000) }]);
-  if (p) {
-    const maxR = Math.max(p.gridProperties.rowCount, rows.length), maxC = Math.max(p.gridProperties.columnCount, width), clear = [];
-    if (maxR > rows.length) clear.push(tab + '!A' + (rows.length + 1) + ':' + colLetter(maxC) + maxR);
-    if (maxC > width) clear.push(tab + '!' + colLetter(width + 1) + '1:' + colLetter(maxC) + rows.length);
-    if (clear.length) await G.sheetsClear(id, clear);
-  }
+  if (inserted || !grid.length) grid = await read();
+  head = headIso();
+  if (!grid.length || !String((grid[0] || [])[0] || '').trim()) await G.sheetsWrite(id, [{ range: tab + '!A1', values: [['Emp ID', 'Employee Name', 'Trainer', 'DOJ']] }]);
+
+  // 2. Trainer Desk's rows: change in place, add at the bottom, remove the ones it no longer has.
+  const rowOf = new Map();
+  grid.forEach((r, i) => { const k = K(r[0]); if (i && k && !rowOf.has(k)) rowOf.set(k, i + 1); });
+  const del = gone.map(k => rowOf.get(k)).filter(Boolean);
+  await deleteRows(p, del);
+  let last = 1;
+  grid.forEach((r, i) => { if (r.some(v => String(v).trim())) last = i + 1; });
+  last = Math.max(1, shiftAfter(last + 1, del) - 1);
+  const width = Math.max(head.length, 4), data = [], add = [];
+  const line = v => v.base.concat(head.slice(4).map(d => (d && v.marks[d]) || ''));
+  changed.forEach(([k, v]) => {
+    const at = rowOf.get(K(k));
+    if (at) data.push({ range: tab + '!A' + shiftAfter(at, del), values: [line(v)] });
+    else add.push(line(v));
+  });
+  if (add.length) data.push({ range: tab + '!A' + (last + 1), values: add });
+  await ensureSize(p, last + 1 + add.length, width);
+  if (data.length) await G.sheetsWrite(id, data);
+  changed.forEach(([k, v]) => remember(name, k, hashOf(v)));
+  gone.forEach(k => remember(name, k, null));
+  return changed.length + gone.length;
 }
 
 let busy = false;
-/** Copies every changed tab back to the tracker. */
+/** Writes every changed tab to the tracker. Returns the tabs written. */
 export async function mirrorNow() {
-  // Never before the old tabs have been read in: the copy would replace them.
-  if (busy || SERVER.demo || !SERVER.mirror || !G.sheetsConnected() || !db.getMeta('imported_from_sheets', null)) return [];
+  if (busy || SERVER.demo || !SERVER.mirror || !G.sheetsConnected()) return [];
   busy = true;
   try {
     const dirty = db.all('SELECT tab, since FROM mirror_dirty');
@@ -103,34 +234,35 @@ export async function mirrorNow() {
     const meta = await G.sheetsMeta(CONFIG.TRACKER_ID);
     const done = [];
     for (const d of dirty) {
-      if (!TABS[d.tab]) { db.run('DELETE FROM mirror_dirty WHERE tab = ?', d.tab); continue; }
+      const spec = TABS[d.tab];
+      if (!spec) { db.run('DELETE FROM mirror_dirty WHERE tab = ?', d.tab); continue; }
       const startedAt = new Date().toISOString();
       try {
-        await writeTab(meta, d.tab, TABS[d.tab]());
+        const n = spec.attendance ? await syncAttendance(meta) : await syncTab(meta, d.tab, spec);
         // Changes made while this tab was being written keep it dirty for the next round.
         db.run('DELETE FROM mirror_dirty WHERE tab = ? AND since = ?', d.tab, d.since);
         db.run('UPDATE mirror_dirty SET since = ? WHERE tab = ? AND since < ?', startedAt, d.tab, startedAt);
-        done.push(d.tab);
+        if (n) done.push(d.tab + ' (' + n + ')');
       } catch (e) {
-        log(d.tab, 'not copied:', e.message);
+        log(d.tab, 'not written:', e.message);
       }
     }
-    if (done.length) log('copied to the tracker:', done.join(', '));
-    return done;
+    if (done.length) log('written to the tracker:', done.join(', '));
+    return done.map(x => x.replace(/ \(\d+\)$/, ''));
   } finally {
     busy = false;
   }
 }
 
 let timer = null, soon = null, started = false;
-/** Copies changes a few seconds after they are saved (several quick saves go out together). */
+/** Writes changes a few seconds after they are saved (several quick saves go out together). */
 function mirrorSoon() {
   if (!started || soon || SERVER.demo || !SERVER.mirror) return;
   soon = setTimeout(async () => {
     soon = null;
     let done = [];
     try { done = await mirrorNow(); } catch (e) { log(e.message); }
-    // Changed again while copying: go again. If Google failed, the regular timer retries (no hammering).
+    // Changed again while writing: go again. If Google failed, the regular timer retries (no hammering).
     if (done.length && db.isOpen() && db.get('SELECT 1 FROM mirror_dirty LIMIT 1')) mirrorSoon();
   }, SERVER.mirrorDelaySeconds * 1000);
 }
@@ -141,93 +273,3 @@ export function start() {
   mirrorSoon();
 }
 export function stop() { started = false; clearInterval(timer); clearTimeout(soon); }
-
-/* ------------------------------------------------------------------ */
-/* First start: bring the existing tabs into SQLite                     */
-/* ------------------------------------------------------------------ */
-
-const APP_TABLES = ['excluded_candidates', 'attendance', 'attendance_log', 'change_requests', 'mock_scores', 'nht_status', 'ojt_team',
-  'ojt_manual_inputs', 'ojt_dashboard', 'ojt_performance', 'whatsapp_log'];
-
-export function appDataEmpty() { return APP_TABLES.every(t => !db.get('SELECT 1 FROM ' + t + ' LIMIT 1')); }
-
-/**
- * grids: { tabName: grid } as read from the tracker (dates as text). Fills the app tables from them.
- * Only runs when every app table is empty, so it can never overwrite data saved in Trainer Desk.
- */
-export function importGrids(grids, locale) {
-  if (!appDataEmpty()) throw new Error('Trainer Desk already has its own data; the old tabs were not imported again.');
-  const d = v => (typeof v === 'string' ? parseSheetDate(v, locale) : '');
-  const ts = v => { const x = typeof v === 'string' ? parseSheetDate(v, locale, true) : null; return x ? x.at : ''; };
-  const num = v => (typeof v === 'number' && !isNaN(v) ? v : (v === '' || v == null || isNaN(Number(v)) ? null : Number(v)));
-  const rows = name => (grids[name] || []).slice(1).filter(r => r && r.length && String(r[0] == null ? '' : r[0]).trim());
-  const c = {};
-  db.tx(() => {
-    c.excluded = db.insertMany('excluded_candidates', dedupe(rows('Excluded Candidates').map(r => ({ emp_id: normId(r[0]), name: text(r[1]), department: text(r[2]), doj: d(r[3]),
-      reason: text(r[4]) || 'Not handled by the training team', removed_by: norm(r[5]), removed_on: ts(r[6]) || new Date().toISOString() })), 'emp_id'));
-
-    const att = grids['Attendance'] || [], marks = [];
-    if (att.length) {
-      const dates = att[0].map((v, i) => (i >= 4 ? d(v) : ''));
-      att.slice(1).forEach(r => {
-        const id = normId(r[0]);
-        if (!id) return;
-        for (let k = 4; k < r.length; k++) {
-          const code = String(r[k] == null ? '' : r[k]).trim().toUpperCase();
-          if (code && dates[k]) marks.push({ emp_id: id, date: dates[k], code, trainer: norm(r[2]), name: text(r[1]), doj: d(r[3]), marked_by: 'imported', marked_on: new Date().toISOString() });
-        }
-      });
-    }
-    c.attendance = db.insertMany('attendance', dedupe(marks, 'emp_id', 'date'));
-    c.attendanceLog = db.insertMany('attendance_log', rows('Attendance Log').map(r => ({ changed_on: ts(r[0]), changed_by: norm(r[1]), trainer: norm(r[2]), emp_id: normId(r[3]),
-      date: d(r[4]), old_code: text(r[5]).toUpperCase(), new_code: text(r[6]).toUpperCase() })));
-
-    const okStatus = new Set(['Pending', 'Approved', 'Rejected', 'Superseded']);
-    c.changeRequests = db.insertMany('change_requests', dedupe(rows('Change Requests').map(r => ({ id: text(r[0]), requested_on: ts(r[1]), requested_by: norm(r[2]), trainer: norm(r[3]),
-      emp_id: normId(r[4]), name: text(r[5]), field: text(r[6]), old_text: text(r[7]), new_text: text(r[8]), status: okStatus.has(text(r[9])) ? text(r[9]) : 'Rejected',
-      reviewed_by: text(r[10]), reviewed_on: ts(r[11]), note: text(r[12]), data: text(r[13]) || '{}' })), 'id'));
-
-    c.mocks = db.insertMany('mock_scores', rows('Mock Scores').map(r => ({ emp_id: normId(r[0]), name: text(r[1]), trainer: norm(r[2]), mock_date: d(r[3]), attempt: text(r[4]),
-      score: num(r[5]), status: text(r[6]), final: text(r[7]) === 'Yes' ? 1 : 0, entered_by: norm(r[8]), approved_by: text(r[9]), approved_on: ts(r[10]) })));
-    c.nhtStatus = db.insertMany('nht_status', dedupe(rows('NHT Status').map(r => ({ emp_id: normId(r[0]), name: text(r[1]), trainer: norm(r[2]), ojt_entered: text(r[3]),
-      ojt_eligible: text(r[4]), updated_by: text(r[5]), updated_on: ts(r[6]) })), 'emp_id'));
-    c.ojtTeam = db.insertMany('ojt_team', dedupe(rows('OJT Team').filter(r => text(r[3])).map(r => ({ emp_id: normId(r[0]), name: text(r[1]), trainer: norm(r[2]), team: text(r[3]),
-      updated_by: text(r[4]), updated_on: ts(r[5]) })), 'emp_id'));
-    c.ojtInputs = db.insertMany('ojt_manual_inputs', dedupe(rows('OJT Manual Inputs').filter(r => text(r[3]) && num(r[4]) !== null).map(r => ({ emp_id: normId(r[0]), metric: text(r[3]),
-      name: text(r[1]), trainer: norm(r[2]), achieved: num(r[4]), updated_by: text(r[5]), updated_on: ts(r[6]) })), 'emp_id', 'metric'));
-    c.ojtDashboard = db.insertMany('ojt_dashboard', rows('OJT Dashboard').map(r => ({ emp_id: normId(r[0]), name: text(r[1]), trainer: norm(r[2]), work_mode: text(r[3]),
-      doj: d(r[4]), training_end: d(r[5]), ojt_start: d(r[6]), ojt_end: d(r[7]), status: text(r[8]), ojt_day: num(r[9]) || 0, talk_days: num(r[10]) || 0,
-      talk_hours: num(r[11]) || 0, last_talk: d(r[12]), updated_on: ts(r[13]), team: text(r[14]), team_set: text(r[15]) === 'Yes' ? 1 : 0,
-      achievement: num(r[16]), score: num(r[17]), result: text(r[18]), pass_rule: text(r[19]), note: text(r[20]) })));
-    c.ojtPerformance = db.insertMany('ojt_performance', rows('OJT Performance').map(r => ({ emp_id: normId(r[0]), name: text(r[1]), trainer: norm(r[2]), team: text(r[3]),
-      metric: text(r[4]), type: text(r[5]), weight: num(r[6]), kind: text(r[7]), target: num(r[8]), achieved: num(r[9]), pct: num(r[10]), score: num(r[11]),
-      date_from: d(r[12]), date_to: d(r[13]), data: text(r[14]),
-      weeks: JSON.stringify([0, 1, 2, 3].map(k => ({ target: num(r[15 + 2 * k]), achieved: num(r[16 + 2 * k]) }))) })));
-    c.whatsapp = db.insertMany('whatsapp_log', rows('WhatsApp Log').map(r => ({ sent_on: ts(r[0]), trainer: norm(r[1]), emp_id: normId(r[2]), candidate: text(r[3]),
-      candidate_phone: text(r[4]), sent_to: text(r[5]), template: text(r[6]), status: text(r[7]) || 'logged', detail: text(r[8]) })));
-    db.setMeta('imported_from_sheets', { on: new Date().toISOString(), counts: c });
-  });
-  return c;
-}
-
-/** Keeps the last row for each key (the sheets could hold repeats; the tables cannot). */
-function dedupe(list, ...keys) {
-  const m = new Map();
-  list.forEach(r => m.set(keys.map(k => r[k]).join('\u0000'), r));
-  return [...m.values()];
-}
-
-/** Reads the old tabs from the tracker and imports them (first start only). */
-export async function importFromSheets() {
-  if (db.getMeta('imported_from_sheets', null)) return null;
-  if (!appDataEmpty()) { db.setMeta('imported_from_sheets', { on: new Date().toISOString(), skipped: 'Trainer Desk already had its own data' }); return null; }
-  const meta = await G.sheetsMeta(CONFIG.TRACKER_ID);
-  const have = new Set(meta.sheets.map(s => s.properties.title));
-  const names = Object.keys(TABS).filter(n => have.has(n));
-  const values = await G.sheetsValues(CONFIG.TRACKER_ID, names);
-  const grids = {};
-  names.forEach((n, i) => { grids[n] = values[i]; });
-  const counts = importGrids(grids, meta.properties.locale || 'en_US');
-  log('imported the existing tabs:', JSON.stringify(counts));
-  return counts;
-}

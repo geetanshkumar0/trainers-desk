@@ -12,13 +12,24 @@ const MASTER_SELECT = `SELECT emp_id empId, trainer, manager, mentor, doj, work_
   mock_attempt mockAttempt, mock_status mockStatus, training_end trainingEnd, training_days trainingDays, ojt_start ojtStart,
   ojt_pct ojtPct, ojt_end ojtEnd, attrition_day attritionDay, lwd FROM in_master`;
 
-/** Master Dashboard rows (in sheet order), optionally for one trainer. */
-export function masterRows(trainer) {
+function loaded() {
   if (!db.get('SELECT 1 FROM sync_status WHERE name = ?', CONFIG.MASTER_SHEET)) {
     throw new UserError('Still loading the sheets, try again in a few seconds.', 503);
   }
-  return trainer ? db.all(MASTER_SELECT + ' WHERE trainer = ? ORDER BY COALESCE(row_no, 1e9), seq', trainer)
-    : db.all(MASTER_SELECT + ' ORDER BY COALESCE(row_no, 1e9), seq');
+}
+const CLAIMED = ' WHERE emp_id IN (SELECT emp_id FROM claims)';
+
+/** Master Dashboard rows of trainees claimed in Trainer Desk (in sheet order), optionally for one trainer. */
+export function masterRows(trainer) {
+  loaded();
+  return trainer ? db.all(MASTER_SELECT + CLAIMED + ' AND trainer = ? ORDER BY COALESCE(row_no, 1e9), seq', trainer)
+    : db.all(MASTER_SELECT + CLAIMED + ' ORDER BY COALESCE(row_no, 1e9), seq');
+}
+
+/** Every Master Dashboard row, claimed here or not. Only the Performance Dashboards use this. */
+export function liveMasterRows() {
+  loaded();
+  return db.all(MASTER_SELECT + ' ORDER BY COALESCE(row_no, 1e9), seq');
 }
 
 export function org() {
@@ -84,11 +95,7 @@ export function nhtStage() {
     status[r.emp_id] = { entered: r.ojt_entered, eligible: r.ojt_eligible };
     if (r.ojt_entered === 'Yes' && r.ojt_eligible === 'Yes' && r.updated_on) movedOn[r.emp_id] = isoDay(new Date(r.updated_on));
   });
-  // Final mocks recorded before this rule existed already moved the trainee on (a Pass went straight to OJT),
-  // so only later ones wait for the OJT answers. The start of the rule is noted the first time it is used.
-  let since = db.getMeta('ojt_answer_rule_since', '');
-  if (!since) { since = new Date().toISOString(); db.setMeta('ojt_answer_rule_since', since); }
-  db.all('SELECT emp_id, status, mock_date FROM mock_scores WHERE final = 1 AND approved_on >= ? ORDER BY id', since)
+  db.all('SELECT emp_id, status, mock_date FROM mock_scores WHERE final = 1 ORDER BY id')
     .forEach(r => { finalMock[r.emp_id] = { status: r.status, date: r.mock_date }; });
   return { status, finalMock, movedOn };
 }
