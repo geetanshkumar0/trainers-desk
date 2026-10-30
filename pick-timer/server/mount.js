@@ -67,7 +67,7 @@ function createPickTimer(opts) {
      are left as they are, and nothing is added back later if an administrator renames or turns one off. */
   const KC_LIST_VERSION = 1;
   function addKcList() {
-    if ((S.kcListVersion || 0) >= KC_LIST_VERSION) return 0;
+    if ((S.settings.kcListVersion || 0) >= KC_LIST_VERSION) return 0;
     const key = n => String(n).replace(/\s+/g, ' ').trim().toLowerCase();
     const have = new Set(S.kcs.map(k => key(k.name)));
     let added = 0;
@@ -75,11 +75,35 @@ function createPickTimer(opts) {
       if (have.has(key(name))) continue;
       S.kcs.push({id: env.uid('k'), name, type: 'Objective', active: true}); have.add(key(name)); added++;
     }
-    S.kcListVersion = KC_LIST_VERSION;
+    S.settings.kcListVersion = KC_LIST_VERSION;
     if (added) log(`added ${added} KC names to the KC list`);
     return added;
   }
   addKcList();
+
+  /* One-time removals asked for by the team. Each runs once and matches one exact booking, so nothing else is touched. */
+  const REMOVALS = [
+    // 30 Oct 2026: Abhijeet Patel's test booking (1 PM, Online, attendee NBTS41735, "KC Test" requested).
+    {id: 'abhijeet-test-2026-10-30', trainer: 'abhijeet.patel@nobroker.in', date: '2026-10-30', hour: 13, mode: 'Online', empIds: ['NBTS41735']}
+  ];
+  function runRemovals() {
+    S.settings.removalsDone = S.settings.removalsDone || [];
+    for (const r of REMOVALS) {
+      if (S.settings.removalsDone.includes(r.id)) continue;
+      const trainer = S.users.find(u => String(u.email).toLowerCase() === r.trainer);
+      const hits = S.sessions.filter(x => trainer && x.trainerId === trainer.id && x.date === r.date && x.hour === r.hour && x.mode === r.mode
+        && JSON.stringify(S.attendees.filter(a => a.sessionId === x.id).map(a => String(a.empId).trim().toUpperCase()).sort()) === JSON.stringify(r.empIds));
+      if (hits.length === 1) {
+        const id = hits[0].id;
+        S.sessions = S.sessions.filter(x => x.id !== id);
+        S.attendees = S.attendees.filter(a => a.sessionId !== id);
+        S.approvals = S.approvals.filter(a => a.sessionId !== id);
+        log(`removed booking ${id} (${r.id})`);
+      } else log(`removal ${r.id}: ${hits.length} matching bookings, nothing removed`);
+      S.settings.removalsDone.push(r.id);
+    }
+  }
+  runRemovals();
   store.save(S);
 
   /* Operations run one at a time, so seat counts can never race. */

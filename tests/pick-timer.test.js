@@ -177,3 +177,26 @@ test('PIA\'s KC names are in the KC list once, without duplicates', async () => 
   assert.equal(new Set(list).size, list.length, 'no duplicates');
   assert.equal(names.length, 100);
 });
+
+test('the KC list is added only once, and the test booking removal matches only that booking', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-once-'));
+  const { Store } = createRequire(import.meta.url)('../pick-timer/server/store.js');
+  const mk = () => createPickTimer({ dataDir: d, demo: false, log: () => {} });
+  let pt = mk(); let S = pt.state();
+  assert.equal(S.kcs.length, 100);
+  // An admin turns one KC off and deletes another; Abhijeet has the test booking and a real one.
+  S.kcs.pop(); S.kcs[0].active = false;
+  const ab = { id: 'uab', name: 'Abhijeet Patel', email: 'abhijeet.patel@nobroker.in', role: 'trainer', active: true };
+  S.users.push(ab);
+  const sess = (id, hour, emp) => { S.sessions.push({ id, date: '2026-10-30', hour, mode: 'Online', trainerId: 'uab', status: 'assigned', attempt: 1 }); S.attendees.push({ id: 'a' + id, sessionId: id, empId: emp, name: 'x', email: 'x@nobroker.in' }); };
+  sess('test', 13, 'NBTS41735'); sess('real', 14, 'NBTS41735');
+  S.settings.removalsDone = [];
+  pt.close();
+  const st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
+  pt = mk(); S = pt.state();
+  assert.equal(S.kcs.length, 99, 'a deleted KC is not added back');
+  assert.equal(S.kcs[0].active, false);
+  assert.deepEqual(S.sessions.map(s => s.id), ['real']);
+  assert.deepEqual(S.attendees.map(a => a.sessionId), ['real']);
+  pt.close(); fs.rmSync(d, { recursive: true, force: true });
+});
