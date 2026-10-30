@@ -90,7 +90,7 @@
     const banner = window.PREVIEW_API ? window.PREVIEW_API.banner(null) : '';
     return `${banner}<div class="signin"><div class="card"><div class="brand"><span class="logo">${clockIcon()}</span>${h(B?.site || 'Pick Timer')}</div>
 <p class="muted">Knowledge Check scheduling for trainers and the PIA team.</p>
-${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${h(B?.email || 'Your account')} does not have access to Pick Timer yet. Trainers in Trainer Desk get access automatically; anyone else (for example the PIA team) is added by an administrator under Site administration › Users.</div>`}
+${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${h(B?.email || 'Your account')} does not have access to Pick Timer yet. Pick Timer has its own users and roles: ask a Pick Timer administrator to add you under Site administration › Users.</div>`}
 <div class="row" style="margin-top:14px"><a class="btn primary" href="../">Back to Trainer Desk</a><a class="btn ghost" href="../auth/logout">Use a different Google account</a></div></div></div>`;
   }
 
@@ -334,7 +334,7 @@ ${list.map(u => `<tr${u.active ? '' : ' style="opacity:.55"'}><td>${h(u.name)}${
 <label class="f">Name<input name="name" value="${h(editing?.name || '')}" required></label><label class="f">Email<input type="email" name="email" value="${h(editing?.email || '')}" ${editing?.builtin ? 'readonly' : ''} required></label>
 <label class="f">Role<select name="role" ${editing?.builtin ? 'disabled' : ''}>${C.ROLES.map(x => opt(x, ROLE[x], editing?.role || 'trainer')).join('')}</select></label>
 ${editing && !editing.builtin ? `<label class="check"><input type="checkbox" name="active" ${editing.active ? 'checked' : ''}> Active (can sign in)</label>` : ''}
-<p class="muted small">People open Pick Timer from Trainer Desk with their nobroker.in Google account. Trainers in Trainer Desk are added automatically the first time they open it; add the PIA team and anyone else here. Trainer Desk admins are built-in admins.</p>
+<p class="muted small">People open Pick Timer from Trainer Desk with their nobroker.in Google account. Only the people listed here can get in, with the role given here; Pick Timer's admins and roles are separate from Trainer Desk's.</p>
 <div class="row"><button class="btn primary">${editing ? 'Save' : 'Add user'}</button>${editing ? '<a class="btn ghost" href="#/admin/users">Cancel</a>' : ''}</div></div></form></div>`;
   }
   function adminKcs(r) {
@@ -367,21 +367,20 @@ ${editing ? `<label class="check"><input type="checkbox" name="active" ${editing
   }
   function adminSheet() {
     const s = V.settings.sheet, last = V.syncLog[0];
-    return `<form class="card" data-form="settings" data-section="sheet"><h2>Score sheet link</h2>
-<p class="muted">The tool reads PIA's own score sheet through a small Apps Script. It never writes to the sheet. It reads when PIA clicks <b>Pull scores</b> and every 15 minutes.</p>
-<div class="form cols"><label class="f">Apps Script web app URL<input name="url" value="${h(s.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    return `<form class="card" data-form="settings" data-section="sheet"><h2>Score sheet</h2>
+<p class="muted">Pick Timer reads PIA's score sheet through the Google account Trainer Desk uses for its sheets. It never writes to the sheet. It reads when PIA clicks <b>Pull scores</b> and every 15 minutes.</p>
+<div class="form cols"><label class="f">Score sheet link<input name="sheetId" value="${h(s.sheetId ? 'https://docs.google.com/spreadsheets/d/' + s.sheetId + '/edit' : '')}" placeholder="https://docs.google.com/spreadsheets/d/…/edit"></label>
+<label class="f">Tab name<input name="tab" value="${h(s.tab || '')}" placeholder="KC Sheet"></label></div>
+<p class="muted small" style="margin-top:6px">The sheet must be shared (view access is enough) with Trainer Desk's Google account. If it cannot be, use an Apps Script link instead (below).</p>
+<details style="margin-top:10px" ${s.url && !s.sheetId ? 'open' : ''}><summary class="small">Use an Apps Script link instead</summary>
+<div class="form cols" style="margin-top:10px"><label class="f">Apps Script web app URL<input name="url" value="${h(s.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
 <label class="f">Secret key<input name="key" placeholder="${s.hasKey ? 'Saved (leave blank to keep)' : ''}" autocomplete="off"></label></div>
-<div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" data-act="genKey">Generate a key</button><button type="button" class="btn" data-act="testSheet">Test connection</button><button type="button" class="btn" data-act="syncNow">Sync now</button></div>
+<p class="muted small">Leave the score sheet link empty to use this. Steps: open the score sheet, Extensions › Apps Script, paste the script below, put a key (<button type="button" class="btn sm" data-act="genKey">Generate a key</button>) into SECRET_KEY and into the box above, Deploy › Web app (Execute as: Me, Who has access: Anyone), paste the /exec URL above.</p>
+${ui.appsScript == null ? '<p class="muted">Loading the script…</p>' : `<pre class="code">${h(ui.appsScript)}</pre><button type="button" class="btn sm" data-act="copyScript">Copy script</button>`}</details>
+<div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" data-act="testSheet">Test connection</button><button type="button" class="btn" data-act="syncNow">Sync now</button></div>
 ${ui.sheetTest ? `<div class="note ${ui.sheetTest.missing?.length ? 'warn' : 'good'}" style="margin-top:12px">${ui.sheetTest.error ? h(ui.sheetTest.error) : `Connected to "${h(ui.sheetTest.sheet)}": ${ui.sheetTest.rows} rows. ${ui.sheetTest.missing.length ? `Missing columns: <b>${h(ui.sheetTest.missing.join(', '))}</b>.` : 'All required columns found.'}<br><span class="small">Headers: ${h(ui.sheetTest.headers.join(' · '))}</span>`}</div>` : ''}
-${last ? `<p class="small muted" style="margin-top:12px">Last read ${when(last.at)}: ${last.error ? `<span style="color:var(--bad)">${h(last.error)}</span>` : `${last.rows} rows, ${last.added} new, ${last.updated} updated, ${last.skipped.length} skipped.`} <a href="#/admin/synclog">Sync log</a></p>` : ''}</form>
-<div class="card"><h2>Set it up (about 5 minutes)</h2><ol style="margin:0 0 12px 18px;padding:0">
-<li>Open PIA's score sheet while signed in to the Google account the tool sends email from (it must have edit access).</li>
-<li>Extensions › Apps Script. Delete what's there and paste the script below.</li>
-<li>Click <b>Generate a key</b> above, copy the key into <span class="mono">SECRET_KEY</span> at the top of the script, and also paste it into the Secret key box.</li>
-<li>Deploy › New deployment › type <b>Web app</b>. Execute as: <b>Me</b>. Who has access: <b>Anyone</b>. Approve the permissions.</li>
-<li>Copy the web app URL (ends in <span class="mono">/exec</span>) into the box above, Save, then <b>Test connection</b>.</li></ol>
-<p class="muted small">Required columns: ${h(['Emp ID', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Obtained Percentage', 'Passing percentage'].join(', '))}. Columns are found by their header names, so order doesn't matter, but don't rename them.</p>
-${ui.appsScript == null ? '<p class="muted">Loading the script…</p>' : `<pre class="code">${h(ui.appsScript)}</pre><button class="btn sm" data-act="copyScript">Copy script</button>`}</div>`;
+${last ? `<p class="small muted" style="margin-top:12px">Last read ${when(last.at)}: ${last.error ? `<span style="color:var(--bad)">${h(last.error)}</span>` : `${last.rows} rows, ${last.added} new, ${last.updated} updated, ${last.skipped.length} skipped.`} <a href="#/admin/synclog">Sync log</a></p>` : ''}
+<p class="muted small" style="margin-top:12px">Required columns: ${h(['Emp ID', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Obtained Percentage', 'Passing percentage'].join(', '))}. Columns are found by their header names, so order does not matter, but do not rename them.</p></form>`;
   }
   function adminEmailLog() {
     return `<div class="card flush scroll"><table class="t"><thead><tr><th>Time</th><th>To</th><th>Subject</th><th>Status</th></tr></thead><tbody>

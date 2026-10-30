@@ -23,7 +23,7 @@ import * as mirror from './mirror.js';
 import * as ojt from './services/ojt.js';
 import { MODE as WA_MODE } from './services/whatsapp.js';
 import routes, { setPickTimerAccess } from './routes.js';
-import * as data from './data.js';
+import { readScoreSheet } from './scoresheet.js';
 import { isoDay } from './dates.js';
 import { send, json, redirect, html, esc, serveStatic } from './web.js';
 
@@ -34,12 +34,9 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const { createPickTimer } = createRequire(import.meta.url)('../pick-timer/server/mount.js');
 let pickTimer = null;
 
-/** Who is visiting, as Pick Timer needs to know: Trainer Desk admins are its admins, trainers its trainers. */
-function pickTimerUser(email) {
-  let s = null;
-  try { s = data.session(email); } catch (e) { s = null; }
-  return { email, name: s ? s.name : '', isAdmin: CONFIG.ADMIN_EMAILS.includes(email), isTrainer: !!(s && s.isTrainer) };
-}
+// Pick Timer has its own admins and roles: Trainer Desk only tells it who signed in.
+const pickTimerUser = email => ({ email });
+
 
 function page(title, body) {
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) +
@@ -166,7 +163,7 @@ function startBackups() {
 
 export function startServer() {
   db.open(SERVER.dbFile);
-  pickTimer = createPickTimer({ dataDir: SERVER.dataDir, demo: SERVER.demo, admins: CONFIG.ADMIN_EMAILS });
+  pickTimer = createPickTimer({ dataDir: SERVER.dataDir, demo: SERVER.demo, readSheet: readScoreSheet, sheetsAccount: () => G.sheetsAccount(), defaultSheet: CONFIG.PICK_TIMER_SHEET });
   setPickTimerAccess(email => pickTimer.hasAccess(pickTimerUser(email)));
   pickTimer.start();
   if (G.adoptOldTokenFile(path.join(SERVER.dataDir, 'sheets_token.json'))) log('sheets token brought over from sheets_token.json');

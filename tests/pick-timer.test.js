@@ -1,6 +1,6 @@
 /**
- * Pick Timer inside Trainer Desk: who gets in (Trainer Desk admins, trainers, people added by an admin),
- * a booking through the mounted server, and data kept across a restart.
+ * Pick Timer inside Trainer Desk: its own admins and roles (separate from Trainer Desk's), a booking through the
+ * mounted server, reading the score sheet through Trainer Desk's Google account, and data kept across a restart.
  * The rules themselves are tested in pick-timer/test/core.test.js.
  */
 import { test } from 'node:test';
@@ -14,20 +14,21 @@ import { createRequire } from 'node:module';
 const { createPickTimer } = createRequire(import.meta.url)('../pick-timer/server/mount.js');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'td-pt-'));
 const ADMIN = 'geetansh.kumar@nobroker.in';
-const PEOPLE = {
-  [ADMIN]: { name: 'Geetansh Kumar', isAdmin: true, isTrainer: false },
-  'aditi.rao@nobroker.in': { name: 'Aditi Rao', isAdmin: false, isTrainer: true },
-  'priya.nair@nobroker.in': { name: 'Priya Nair', isAdmin: false, isTrainer: false },     // a manager, not a trainer
-  'rahul.pia@nobroker.in': { name: 'Rahul', isAdmin: false, isTrainer: false }
-};
+const TD_ADMIN = 'gaurav.garg@nobroker.in';          // a Trainer Desk admin: no say in Pick Timer
+const TD_TRAINER = 'aditi.rao@nobroker.in';          // a Trainer Desk trainer: no access until added here
+
+// PIA's score sheet as Trainer Desk would read it (see server/scoresheet.js).
+const SHEET = { headers: ['Emp ID', 'Name', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Score', 'Obtained Percentage', 'Passing percentage'], rows: [] };
+let sheetCalls = [], sheetError = null;
+async function readSheet(id, tab) { sheetCalls.push([id, tab]); if (sheetError) throw sheetError; return SHEET; }
 
 let pt, server, base;
 function start() {
-  pt = createPickTimer({ dataDir: dir, demo: false, admins: [ADMIN], log: () => {} });
-  // As Trainer Desk does: the signed-in e-mail (here a header) and what Trainer Desk knows about that person.
+  pt = createPickTimer({ dataDir: dir, demo: false, log: () => {}, readSheet, sheetsAccount: () => 'nbhr@nobroker.in',
+    defaultSheet: { sheetId: '1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', tab: 'KC Sheet' } });
+  // As Trainer Desk does: it passes only the signed-in e-mail (here a header).
   server = http.createServer((req, res) => {
-    const email = req.headers['x-test-user'];
-    pt.handle(req, res, new URL(req.url, 'http://x').pathname.replace(/^\/pick-timer\//, ''), Object.assign({ email }, PEOPLE[email]));
+    pt.handle(req, res, new URL(req.url, 'http://x').pathname.replace(/^\/pick-timer\//, ''), { email: req.headers['x-test-user'] });
   });
   return new Promise(r => server.listen(0, () => { base = 'http://127.0.0.1:' + server.address().port + '/pick-timer/'; r(); }));
 }
@@ -52,19 +53,26 @@ test('the page and its files are served under /pick-timer/', async () => {
   assert.equal((await as(ADMIN, 'POST', 'api/op', { op: 'analytics' }, { 'X-Requested-With': '' })).status, 403, 'POST needs the request header');
 });
 
-test('Trainer Desk admins are built-in admins; trainers get in as Trainers; others are refused', async () => {
+test("Pick Timer's admins and roles are its own: Trainer Desk admins and trainers get nothing automatically", async () => {
   const a = await as(ADMIN, 'GET', 'api/boot');
   assert.equal(a.data.view.me.role, 'admin');
-  assert.equal(a.data.view.me.builtin, true);
+  assert.equal(a.data.view.me.builtin, true, 'built-in admin from pick-timer/server/site-admins.js');
   assert.equal(a.data.view.settings.name, 'Pick Timer');
-  const t = await as('aditi.rao@nobroker.in', 'GET', 'api/boot');
-  assert.equal(t.data.view.me.role, 'trainer');
-  assert.equal(t.data.view.me.name, 'Aditi Rao');
-  const m = await as('priya.nair@nobroker.in', 'GET', 'api/boot');
-  assert.equal(m.data.noAccess, true);
-  assert.equal((await op('priya.nair@nobroker.in', 'analytics', {})).status, 403);
-  assert.equal(pt.hasAccess(Object.assign({ email: 'priya.nair@nobroker.in' }, PEOPLE['priya.nair@nobroker.in'])), false, 'no top-bar button for her');
-  assert.equal(pt.hasAccess(Object.assign({ email: 'aditi.rao@nobroker.in' }, PEOPLE['aditi.rao@nobroker.in'])), true);
+  for (const email of [TD_ADMIN, TD_TRAINER]) {
+    assert.equal((await as(email, 'GET', 'api/boot')).data.noAccess, true, email + ' is not in Pick Timer\'s list');
+    assert.equal((await op(email, 'analytics', {})).status, 403);
+    assert.equal(pt.hasAccess({ email }), false, 'so no top-bar button');
+  }
+  // The Pick Timer admin adds them, with whatever role Pick Timer needs.
+  assert.equal((await op(ADMIN, 'saveUser', { name: 'Aditi Rao', email: TD_TRAINER, role: 'trainer' })).status, 200);
+  assert.equal((await op(ADMIN, 'saveUser', { name: 'Gaurav Garg', email: TD_ADMIN, role: 'pia' })).status, 200);
+  assert.equal((await as(TD_TRAINER, 'GET', 'api/boot')).data.view.me.role, 'trainer');
+  assert.equal((await as(TD_ADMIN, 'GET', 'api/boot')).data.view.me.role, 'pia', 'a Trainer Desk admin can be just PIA here');
+  assert.equal(pt.hasAccess({ email: TD_TRAINER }), true);
+  // ...and can take access away again.
+  const u = (await as(ADMIN, 'GET', 'api/boot')).data.view.users.find(x => x.email === TD_ADMIN);
+  await op(ADMIN, 'saveUser', { id: u.id, name: 'Gaurav Garg', email: TD_ADMIN, role: 'pia', active: false });
+  assert.equal((await as(TD_ADMIN, 'GET', 'api/boot')).data.noAccess, true);
 });
 
 test('a trainer books a KC, a PIA member added by the admin assigns it', async () => {
@@ -73,7 +81,7 @@ test('a trainer books a KC, a PIA member added by the admin assigns it', async (
   const add = await op(ADMIN, 'saveUser', { name: 'Rahul', email: 'rahul.pia@nobroker.in', role: 'pia' });
   assert.equal(add.status, 200);
   const date = nextWorkday(3);
-  const book = await op('aditi.rao@nobroker.in', 'book', { date, hour: 11, mode: 'Online', requestedKcId: kc.data.result.kcId, category: 'New Hire', attempt: 1,
+  const book = await op(TD_TRAINER, 'book', { date, hour: 11, mode: 'Online', requestedKcId: kc.data.result.kcId, category: 'New Hire', attempt: 1,
     attendees: [{ empId: 'NBTS50001', name: 'Asha K', email: 'asha.k@nobroker.in' }] });
   assert.equal(book.status, 200, JSON.stringify(book.data));
   assert.equal(book.data.result.status, 'booked');
@@ -84,6 +92,30 @@ test('a trainer books a KC, a PIA member added by the admin assigns it', async (
   assert.equal(assign.data.view.sessions.find(s => s.id === book.data.result.sessionId).status, 'assigned');
   // Booking emails wait in the log until an admin turns email on.
   assert.ok((await as(ADMIN, 'GET', 'api/boot')).data.view.emailLog.some(m => m.to === 'asha.k@nobroker.in'));
+});
+
+test('the score sheet (KC Sheet tab) is read through Trainer Desk\'s Google account and matched to the booking', async () => {
+  const v = (await as(ADMIN, 'GET', 'api/boot')).data.view;
+  assert.deepEqual([v.settings.sheet.sheetId, v.settings.sheet.tab], ['1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', 'KC Sheet'], 'linked out of the box');
+  const s = v.sessions[0];
+  SHEET.rows = [{ row: 2, cells: ['NBTS50001', 'Asha K', 'Legal Services', s.date, '1', '18', '82%', '75%'] }];
+  const test1 = await op(ADMIN, 'testSheet', {});
+  assert.equal(test1.status, 200, JSON.stringify(test1.data));
+  assert.deepEqual(test1.data.result.missing, []);
+  assert.deepEqual(sheetCalls.at(-1), ['1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', 'KC Sheet']);
+  const pull = await op('rahul.pia@nobroker.in', 'pullScores', { sessionId: s.id });
+  assert.equal(pull.status, 200, JSON.stringify(pull.data));
+  assert.deepEqual([pull.data.result.matched, pull.data.result.total], [1, 1]);
+  const att = pull.data.view.sessions.find(x => x.id === s.id).attendees[0];
+  assert.equal(att.result.pass, true);
+  // When the sheet is not shared with Trainer Desk's account, the message says what to do.
+  sheetError = Object.assign(new Error('Google API 403: The caller does not have permission'), { status: 403 });
+  const bad = await op(ADMIN, 'testSheet', {});
+  assert.match(bad.data.error, /Share it \(view access is enough\) with nbhr@nobroker\.in/);
+  sheetError = null;
+  // A pasted link is accepted.
+  const save = await op(ADMIN, 'saveSettings', { section: 'sheet', values: { sheetId: 'https://docs.google.com/spreadsheets/d/1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss/edit?gid=765048369', tab: 'KC Sheet' } });
+  assert.equal(save.data.view.settings.sheet.sheetId, '1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss');
 });
 
 test('sign-in settings cannot be changed in Pick Timer (Trainer Desk signs people in)', async () => {
@@ -97,9 +129,31 @@ test('everything is kept across a restart, and backed up', async () => {
   const v = (await as(ADMIN, 'GET', 'api/boot')).data.view;
   assert.equal(v.sessions.length, 1);
   assert.ok(v.users.some(u => u.name === 'Aditi Rao' && u.role === 'trainer'));
+  assert.ok(v.users.some(u => u.email === 'gaurav.garg@nobroker.in' && !u.active), 'kept inactive');
   const file = path.join(dir, 'backups', 'pt.db');
   pt.backup(file);
   assert.ok(fs.statSync(file).size > 0);
 });
 
 test.after(async () => { await stop(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+test("Trainer Desk's reader turns the score sheet into header + rows, with Date of KC as yyyy-MM-dd", async () => {
+  const fake = await import('./fake-google.js');
+  const db = await import('../server/db.js');
+  const G = await import('../server/google.js');
+  const { readScoreSheet } = await import('../server/scoresheet.js');
+  db.open(path.join(dir, 'td.db'));
+  G.saveSheetsToken('refresh', 'nbhr@nobroker.in', 'google');
+  fake.install();
+  // A title row above the headers; the date as Sheets stores it (a day number); a blank row.
+  fake.addBook('SCORES', { 'KC Sheet': [['KC scores 2026'], ['Month', 'Emp ID', 'Name', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Obtained Percentage', 'Passing percentage'],
+    ['Oct-26', 'NBTS50001', 'Asha K', 'Legal Services', 46325, '1', '82%', '75%'], [], ['Oct-26', 'NBTS50002', 'Ravi M', 'Legal Services', '30/10/2026', '2', '60%', '75%']] });
+  const out = await readScoreSheet('SCORES', 'KC Sheet');
+  assert.deepEqual(out.headers.slice(0, 3), ['Month', 'Emp ID', 'Name']);
+  assert.equal(out.rows.length, 2);
+  assert.equal(out.rows[0].row, 3);
+  assert.equal(out.rows[0].cells[4], '2026-10-30');
+  assert.equal(out.rows[1].cells[4], '30/10/2026', 'dates typed as text are left for Pick Timer to read');
+  await assert.rejects(readScoreSheet('SCORES', 'Nope'), /400/);
+  db.close();
+});

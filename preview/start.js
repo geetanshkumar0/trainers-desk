@@ -13,7 +13,8 @@ const dir = path.join(HERE, '.data');
 fs.rmSync(dir, { recursive: true, force: true });
 Object.assign(process.env, {
   DEMO: '1', PORT: process.env.PORT || '5177', DATA_DIR: dir, BASE_PATH: '',
-  DESK_EXTRA_ADMINS: 'priya.nair@nobroker.in', DEMO_USER: process.env.DEMO_USER || 'priya.nair@nobroker.in'
+  DESK_EXTRA_ADMINS: 'priya.nair@nobroker.in', DEMO_USER: process.env.DEMO_USER || 'priya.nair@nobroker.in',
+  PICK_TIMER_ADMINS: 'priya.nair@nobroker.in'      // Pick Timer's admins are its own; in the preview, Priya is one
 });
 process.env.PUBLIC_ORIGIN = 'http://localhost:' + process.env.PORT;
 

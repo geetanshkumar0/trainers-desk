@@ -65,6 +65,9 @@ export const CONFIG = {
   MAX_EXCLUDE: 3000,
   BATCH_MERGE_DAYS: 0,
   EMAIL_ADMINS_ON_REQUEST: true,
+  // Pick Timer: PIA's KC score sheet, read through the same Google account as the tracker (it needs view access).
+  // Admins can change it in Pick Timer > Site administration > Score sheet.
+  PICK_TIMER_SHEET: { sheetId: '1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', tab: 'KC Sheet' },
   OJT_REFRESH_HOUR: 6                         // the OJT refresh also runs every morning at this hour (sheet time zone)
 };
 

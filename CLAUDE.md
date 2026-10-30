@@ -8,5 +8,5 @@
   - The full live Master Dashboard is used only by the Performance Dashboards (`data.liveMasterRows()`).
   - Nothing is imported from the old app tabs.
   - Trainer Desk writes only its own rows in the tracker tabs (`server/mirror.js`) and never rewrites a whole tab.
-- **Pick Timer** (`pick-timer/`, mounted at `/pick-timer/` by `server/main.js`) keeps its own rules in `pick-timer/public/core.js` and its own database `data/pick-timer.db`. Trainer Desk does the sign-in; access is Trainer Desk admins (admin), Trainer Desk trainers (trainer, added automatically), and people an admin adds.
+- **Pick Timer** (`pick-timer/`, mounted at `/pick-timer/` by `server/main.js`) keeps its own rules in `pick-timer/public/core.js` and its own database `data/pick-timer.db`. Trainer Desk does the sign-in only. Pick Timer's admins and roles are its own and must stay separate from Trainer Desk's: built-in admins in `pick-timer/server/site-admins.js` (+ `PICK_TIMER_ADMINS`), everyone else added in Pick Timer's user list. Its score sheet (tab KC Sheet) is read via `server/scoresheet.js`.
 - **Never commit** `.env`, `data/` or database files. Keep the repository private: `server/config.js` holds sheet IDs and staff e-mails.

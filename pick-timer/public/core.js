@@ -53,7 +53,7 @@
       settings:{id:'site', name:'KC Pick Timer', siteUrl:'', piaEmail:'',
         smtp:{enabled:false, host:'', port:587, secure:false, user:'', pass:'', from:''},
         sso:{enabled:false, issuer:'https://accounts.google.com', clientId:'', clientSecret:'', label:'Sign in with Google'},
-        sheet:{url:'', key:''}, lastSync:null}};
+        sheet:{sheetId:'', tab:'', url:'', key:''}, lastSync:null}};
   }
 
   /* ---------- people ---------- */
@@ -352,7 +352,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   };
   ops.testSheet = async (S, env, me) => {
     need(isAdmin(me), 'Only the administrator can do this.', 403);
-    need(S.settings.sheet.url, 'Enter the Apps Script web app URL first.');
+    need(S.settings.sheet.sheetId || S.settings.sheet.url, 'Enter the score sheet link first.');
     const data = await env.fetchSheet(S.settings.sheet);
     const found = (data.headers || []).map(String);
     const missing = REQUIRED.filter(k => !found.some(h => H(h) === H(SHEET_COLS[k]) || (ALIASES[k] || []).includes(H(h)))).map(k => SHEET_COLS[k]);
@@ -421,6 +421,11 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       Object.assign(st.sso, {enabled:!!v.enabled, issuer:String(v.issuer || '').trim().replace(/\/+$/, ''), clientId:String(v.clientId || '').trim(), label:String(v.label || 'Sign in with Google').trim().slice(0, 60)});
       if (v.clientSecret) st.sso.clientSecret = String(v.clientSecret).trim();
     } else if (p.section === 'sheet') {
+      // A Google Sheet read through Trainer Desk's Google account (sheet link or ID + tab), or an Apps Script web app.
+      const link = String(v.sheetId || '').trim(), m = link.match(/\/d\/([a-zA-Z0-9_-]{20,})/), sid = m ? m[1] : link;
+      need(!sid || /^[a-zA-Z0-9_-]{20,}$/.test(sid), 'Paste the score sheet link (it contains /d/…/edit) or its ID.');
+      st.sheet.sheetId = sid; st.sheet.tab = String(v.tab || '').trim().slice(0, 100);
+      need(!sid || st.sheet.tab, 'Enter the tab name, for example KC Sheet.');
       const url = String(v.url || '').trim(); need(!url || /^https:\/\/script\.google(usercontent)?\.com\//.test(url), 'Paste the Apps Script web app URL (it starts with https://script.google.com/).');
       st.sheet.url = url; if (v.key) st.sheet.key = String(v.key).trim();
       need(!url || st.sheet.key, 'Enter the secret key that is in the Apps Script.');
@@ -496,7 +501,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       slots:availability(S, today, 28),
       slotRules:admin ? S.slotRules : [],
       settings:admin ? {name:st.name, siteUrl:st.siteUrl, piaEmail:st.piaEmail, lastSync:st.lastSync,
-        smtp:{...st.smtp, pass:'', hasPass:!!st.smtp.pass}, sso:{...st.sso, clientSecret:'', hasSecret:!!st.sso.clientSecret}, sheet:{url:st.sheet.url, hasKey:!!st.sheet.key}}
+        smtp:{...st.smtp, pass:'', hasPass:!!st.smtp.pass}, sso:{...st.sso, clientSecret:'', hasSecret:!!st.sso.clientSecret}, sheet:{sheetId:st.sheet.sheetId || '', tab:st.sheet.tab || '', url:st.sheet.url, hasKey:!!st.sheet.key}}
         : {name:st.name, lastSync:isPia(me) ? st.lastSync : null},
       emailLog:admin ? S.emailLog.slice(-200).reverse().map(m => ({id:m.id, to:m.to, subject:m.subject, status:m.status, at:m.at, error:m.error, text:m.text})) : [],
       syncLog:isPia(me) ? S.syncLog.slice(-40).reverse() : [],

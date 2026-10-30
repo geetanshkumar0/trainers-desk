@@ -78,11 +78,11 @@ export function sheetsMeta(id) {
 }
 
 /** Values of ranges (a tab name = the whole tab). render: UNFORMATTED_VALUE (dates as text) or FORMATTED_VALUE. */
-export async function sheetsValues(id, ranges, render) {
+export async function sheetsValues(id, ranges, render, dateRender) {
   if (!ranges.length) return [];
   const query = ranges.map(t => 'ranges=' + encodeURIComponent(/!/.test(t) || /^'.*'$/.test(t) ? t : q(t))).join('&');
   const j = await gapi('sheets', SHEETS + id + '/values:batchGet?' + query +
-    '&majorDimension=ROWS&valueRenderOption=' + (render || 'UNFORMATTED_VALUE') + '&dateTimeRenderOption=FORMATTED_STRING');
+    '&majorDimension=ROWS&valueRenderOption=' + (render || 'UNFORMATTED_VALUE') + '&dateTimeRenderOption=' + (dateRender || 'FORMATTED_STRING'));
   return (j.valueRanges || []).map(v => v.values || []);
 }
 

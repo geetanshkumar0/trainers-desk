@@ -11,7 +11,7 @@
  * that does not carry the secret key.
  */
 const SECRET_KEY = 'PASTE-THE-KEY-FROM-THE-TOOL-HERE';
-const SHEET_NAME = '';   // tab name to read; leave blank to use the first tab
+const SHEET_NAME = 'KC Sheet';   // tab name to read; leave blank to use the first tab
 
 function doGet(e) {
   try {
