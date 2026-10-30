@@ -18,7 +18,7 @@ const TD_ADMIN = 'gaurav.garg@nobroker.in';          // a Trainer Desk admin: no
 const TD_TRAINER = 'aditi.rao@nobroker.in';          // a Trainer Desk trainer: no access until added here
 
 // PIA's score sheet as Trainer Desk would read it (see server/scoresheet.js).
-const SHEET = { headers: ['Emp ID', 'Name', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Score', 'Obtained Percentage', 'Passing percentage'], rows: [] };
+const SHEET = { headers: ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'], rows: [] };
 let sheetCalls = [], sheetError = null;
 async function readSheet(id, tab) { sheetCalls.push([id, tab]); if (sheetError) throw sheetError; return SHEET; }
 
@@ -98,7 +98,7 @@ test('the score sheet (KC Sheet tab) is read through Trainer Desk\'s Google acco
   const v = (await as(ADMIN, 'GET', 'api/boot')).data.view;
   assert.deepEqual([v.settings.sheet.sheetId, v.settings.sheet.tab], ['1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', 'KC Sheet'], 'linked out of the box');
   const s = v.sessions[0];
-  SHEET.rows = [{ row: 2, cells: ['NBTS50001', 'Asha K', 'Legal Services', s.date, '1', '18', '82%', '75%'] }];
+  SHEET.rows = [{ row: 2, cells: [s.date, 'NBTS50001', '1', '82%', 'Pass'] }];
   const test1 = await op(ADMIN, 'testSheet', {});
   assert.equal(test1.status, 200, JSON.stringify(test1.data));
   assert.deepEqual(test1.data.result.missing, []);
@@ -146,14 +146,23 @@ test("Trainer Desk's reader turns the score sheet into header + rows, with Date 
   G.saveSheetsToken('refresh', 'nbhr@nobroker.in', 'google');
   fake.install();
   // A title row above the headers; the date as Sheets stores it (a day number); a blank row.
-  fake.addBook('SCORES', { 'KC Sheet': [['KC scores 2026'], ['Month', 'Emp ID', 'Name', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Obtained Percentage', 'Passing percentage'],
-    ['Oct-26', 'NBTS50001', 'Asha K', 'Legal Services', 46325, '1', '82%', '75%'], [], ['Oct-26', 'NBTS50002', 'Ravi M', 'Legal Services', '30/10/2026', '2', '60%', '75%']] });
+  fake.addBook('SCORES', { 'KC Sheet': [['KC scores 2026'], ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'],
+    [46325, 'NBTS50001', '1', '82%', 'Pass'], [], ['30/10/2026', 'NBTS50002', '2', '60%', 'Fail']] });
   const out = await readScoreSheet('SCORES', 'KC Sheet');
-  assert.deepEqual(out.headers.slice(0, 3), ['Month', 'Emp ID', 'Name']);
+  assert.deepEqual(out.headers, ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status']);
   assert.equal(out.rows.length, 2);
   assert.equal(out.rows[0].row, 3);
-  assert.equal(out.rows[0].cells[4], '2026-10-30');
-  assert.equal(out.rows[1].cells[4], '30/10/2026', 'dates typed as text are left for Pick Timer to read');
+  assert.equal(out.rows[0].cells[0], '2026-10-30');
+  assert.equal(out.rows[1].cells[0], '30/10/2026', 'dates typed as text are left for Pick Timer to read');
   await assert.rejects(readScoreSheet('SCORES', 'Nope'), /400/);
   db.close();
+});
+
+test('a Pick Timer admin can switch role for their own requests; others cannot', async () => {
+  const asPia = await as(ADMIN, 'GET', 'api/boot', null, { 'X-KC-Role': 'pia' });
+  assert.deepEqual([asPia.data.view.me.role, asPia.data.view.me.realRole], ['pia', 'admin']);
+  const refused = await as(ADMIN, 'POST', 'api/op', { op: 'saveSettings', params: { section: 'general', values: {} } }, { 'X-KC-Role': 'trainer' });
+  assert.equal(refused.status, 403);
+  const pia = await as('rahul.pia@nobroker.in', 'GET', 'api/boot', null, { 'X-KC-Role': 'admin' });
+  assert.equal(pia.data.view.me.role, 'pia');
 });

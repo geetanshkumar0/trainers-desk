@@ -93,8 +93,9 @@ test('cancelling frees the seats', async () => {
   assert.ok(S.emailLog.some(m => /KC cancelled/.test(m.subject) && /Batch moved/.test(m.text)));
 });
 
-const HEAD = ['Month', 'Invigilator', 'Mode of KC', 'KC Type', "Trainer's Name", 'Category', 'Emp ID', 'Email ID', 'Name', 'Team', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Score', 'Obtained Percentage', 'Passing percentage'];
-const row = (empId, date, attempt, obtained, passing = '80%', kc = 'Home Loans') => ['Oct-26', 'pia', 'Online', 'Objective', 't1', 'New Hire', empId, '', '', kc, kc, date, attempt, '18', obtained, passing];
+// PIA's KC Sheet: these five columns, in this order.
+const HEAD = ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'];
+const row = (empId, date, attempt, obtained, status = 'Pass') => [date, empId, attempt, obtained, status];
 
 test('the score sheet is read by header names, in any column order', async () => {
   const {S, env} = world();
@@ -108,6 +109,13 @@ test('a renamed required header stops the sync and names the column', () => {
   const {S, env} = world();
   assert.throws(() => C.applySheet(S, env, null, {headers:HEAD.map(x => x === 'Date of KC' ? 'When' : x === 'Obtained Percentage' ? 'Marks' : x), rows:[]}), /Missing columns in the score sheet: Date of KC, Obtained Percentage/);
   assert.match(S.syncLog[0].error, /Missing columns/);
+  assert.throws(() => C.applySheet(S, env, null, {headers:HEAD.slice(0, 4), rows:[]}), /Missing column in the score sheet: Status/);
+});
+test('Pass or Fail comes from the Status column', () => {
+  const {S, env} = world();
+  const log = C.applySheet(S, env, null, {headers:HEAD, rows:[row('NB1', '2026-10-31', '1', '85%', 'Pass'), row('NB2', '2026-10-31', '1', '90%', 'FAIL'), row('NB3', '2026-10-31', '1', '40%', ' failed '), row('NB4', '2026-10-31', '1', '40%', ''), row('NB5', '2026-10-31', '1', '40%', 'Absent')]});
+  assert.deepEqual(S.results.map(r => [r.empId, r.pass]), [['NB1', true], ['NB2', false], ['NB3', false]], 'the Status decides, not the percentage');
+  assert.deepEqual(log.skipped.map(x => x.reason), ['No Status', 'Status "Absent" is not Pass or Fail']);
 });
 test('dates, percentages and attempts in the usual sheet formats', () => {
   for (const [v, want] of [['2026-10-31', '2026-10-31'], ['31/10/2026', '2026-10-31'], ['31-10-2026', '2026-10-31'], ['31-Oct-2026', '2026-10-31'], ['31 October 2026', '2026-10-31'], ['Oct 31, 2026', '2026-10-31'], ['31/13/2026', null], ['soon', null]])
@@ -132,11 +140,12 @@ test('close-out: every attendee marked, scores found for the completed ones, the
   await rejects(run('pia', 'submitSession', {sessionId}), /Mark every attendee first/);
   await rejects(run('pia', 'markAttendees', {sessionId, marks:[{attendeeId:c.id, completion:'not_completed'}]}), /Choose a reason/);
   await run('pia', 'markAttendees', {sessionId, marks:[{attendeeId:a.id, completion:'completed'}, {attendeeId:b.id, completion:'completed'}, {attendeeId:c.id, completion:'not_completed', reason:'Absent'}]});
-  Object.assign(sheet, {headers:HEAD, rows:[row('NB1', '31-Oct-2026', '1', '85%'), row('nb2 ', '2026-10-31', '1', '60%', '80%', 'Legal Services')]});
+  Object.assign(sheet, {headers:HEAD, rows:[row('NB1', '31-Oct-2026', '1', '85%'), row('nb2 ', '2026-10-31', '1', '60%', 'Fail'), row('NB2', '2026-10-31', '2', '90%')]});
   const r = await run('pia', 'pullScores', {sessionId});
   assert.equal(r.matched, 2);
   const v = C.view(S, 'pia', NOW).sessions[0];
-  assert.equal(v.attendees[1].result.kcMismatch, true, 'sheet KC differs from the assigned KC');
+  assert.deepEqual(v.attendees.map(a => a.result && [a.result.obtained, a.result.pass]), [[85, true], [60, false], null], 'matched by Emp ID, Date of KC and Attempt');
+  assert.equal(v.attendees[0].result.kcMismatch, false, 'the sheet has no KC name column');
   await run('pia', 'submitSession', {sessionId});
   assert.equal(S.sessions[0].status, 'submitted');
   await rejects(run('pia', 'markAttendees', {sessionId, marks:[]}), /already been submitted/);
@@ -184,4 +193,23 @@ test('demo data and demo sheet line up', async () => {
   assert.equal(log.skipped.length, 0); assert.ok(log.added > 20);
   const an = C.ops.analytics(S, env, S.users.find(u => u.role === 'admin'), {from:'2026-10-01', to:'2026-10-30'});
   assert.equal(an.totals.completed, an.totals.pass + an.totals.fail);
+});
+
+test('an administrator can switch to the PIA or trainer role; nobody else can', async () => {
+  const {S, run} = world();
+  assert.equal(C.view(S, 'admin', NOW, 'trainer').me.role, 'trainer');
+  assert.equal(C.view(S, 'admin', NOW, 'trainer').me.realRole, 'admin');
+  assert.equal(C.view(S, 'admin', NOW, 'pia').me.role, 'pia');
+  assert.equal(C.view(S, 'admin', NOW, 'nonsense').me.role, 'admin');
+  assert.equal(C.view(S, 't1', NOW, 'pia').me.role, 'trainer', 'a trainer cannot switch');
+  assert.equal(C.view(S, 'pia', NOW, 'admin').me.role, 'pia', 'a PIA cannot switch up');
+  // As a trainer, the administrator books for themself and sees only their own bookings.
+  const {sessionId} = await C.run(S, {now:() => NOW, uid:p => p + Math.random(), fetchSheet:async () => ({}), sendTestEmail:async () => {}}, 'admin', 'book', booking({attendees:people(2)}), 'trainer');
+  assert.equal(S.sessions.find(s => s.id === sessionId).trainerId, 'admin');
+  await run('t1', 'book', booking({hour:12, attendees:people(2, 20)}));
+  assert.equal(C.view(S, 'admin', NOW, 'trainer').sessions.length, 1);
+  assert.equal(C.view(S, 'admin', NOW).sessions.length, 2);
+  // Switched to trainer, admin-only actions are refused.
+  await rejects(C.run(S, {now:() => NOW, uid:p => p}, 'admin', 'reopenSession', {sessionId}, 'trainer'), /Only the administrator/);
+  assert.equal(S.users.find(u => u.id === 'admin').role, 'admin', 'the stored role never changes');
 });

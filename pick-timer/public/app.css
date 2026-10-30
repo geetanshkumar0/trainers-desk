@@ -143,3 +143,7 @@ details > summary { cursor: pointer; font-weight: 600; }
 .back-td { color: var(--ink-2); font-weight: 600; white-space: nowrap; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); }
 .back-td:hover { background: var(--line-2); text-decoration: none; }
 .brand .logo { background: linear-gradient(135deg, #4f46e5, #7c3aed); }
+/* administrator's role switch */
+.role-switch select { font-size: 12px; font-weight: 600; padding: 3px 6px; border-radius: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.acting { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; padding: 9px 14px; border-radius: 10px; background: var(--warn-soft, #fff4e0); color: var(--warn, #9a5b00); font-size: 13.5px; font-weight: 500; }

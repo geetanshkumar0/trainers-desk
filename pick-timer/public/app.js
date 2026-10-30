@@ -7,7 +7,7 @@
   /* ---------- talking to the server (or to the in-browser preview) ---------- */
   const API = window.PREVIEW_API || {
     async req(method, url, body) {
-      const r = await fetch(url, {method, credentials:'same-origin', headers:{'Content-Type':'application/json', 'X-Requested-With':'kc'}, body:body ? JSON.stringify(body) : undefined});
+      const r = await fetch(url, {method, credentials:'same-origin', headers:{'Content-Type':'application/json', 'X-Requested-With':'kc', 'X-KC-Role':viewAs()}, body:body ? JSON.stringify(body) : undefined});
       let data = {}; try { data = await r.json(); } catch (e) { /* empty */ }
       if (!r.ok) { const err = new Error(data.error || `Request failed (${r.status}).`); err.status = r.status; throw err; }
       return data;
@@ -18,6 +18,11 @@
     logout() { location.href = '../auth/logout'; return new Promise(() => {}); },
     async appsScript() { const r = await fetch('apps-script.gs'); return r.ok ? r.text() : ''; },
   };
+
+  // An administrator can switch to the PIA or trainer role (for this browser tab only).
+  function viewAs() { try { return sessionStorage.getItem('kc-role') || ''; } catch (e) { return ''; } }
+  function setViewAs(role) { try { if (role && role !== 'admin') sessionStorage.setItem('kc-role', role); else sessionStorage.removeItem('kc-role'); } catch (e) { /* tab-only setting */ } }
+  window.KCRole = viewAs;
 
   let V = null, B = null;            // view from the server; sign-in info when signed out
   const ui = {analytics:null, aFilters:null, book:null, marks:{}, slotEdit:null, sessFilter:{status:'open', q:'', mode:''}, appsScript:null, signin:{}, busy:false};
@@ -69,7 +74,7 @@
     const cur = route().parts[0] || '';
     return `<header class="top"><a class="back-td" href="../" title="Back to Trainer Desk">← Trainer Desk</a><a class="brand" href="#/"><span class="logo">${clockIcon()}</span>${h(V.settings.name)}</a>
 <nav class="nav">${navItems().map(([k, l, n]) => `<a href="#/${k}" class="${cur === k || (cur === 'session' && k === 'sessions') ? 'on' : ''}">${h(l)}${n ? `<span class="count">${n}</span>` : ''}</a>`).join('')}</nav>
-<div class="who"><span>${h(V.me.name)}</span><span class="role">${ROLE[V.me.role]}</span><button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
+<div class="who"><span>${h(V.me.name)}</span>${V.me.realRole === 'admin' ? `<label class="role-switch" title="Switch role to use Pick Timer as a PIA or a trainer would"><span class="sr">Role</span><select data-role-switch>${C.ROLES.slice().reverse().map(r => opt(r, ROLE[r], V.me.role)).join('')}</select></label>` : `<span class="role">${ROLE[V.me.role]}</span>`}<button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
   }
   const clockIcon = () => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>`;
 
@@ -79,7 +84,9 @@
     const views = {book:viewBook, sessions:viewSessions, session:viewSession, calendar:viewCalendar, analytics:viewAnalytics, approvals:viewApprovals, slots:viewSlots, admin:viewAdmin};
     const fn = views[p] && (p !== 'approvals' && p !== 'slots' && p !== 'admin' || isAdmin()) && (p !== 'book' || isTrainer() || isAdmin()) ? views[p] : viewCalendar;
     let body; try { body = fn(r); } catch (e) { console.error(e); body = `<div class="note bad">Something went wrong showing this page: ${h(e.message)}</div>`; }
-    $app.innerHTML = (window.PREVIEW_API ? window.PREVIEW_API.banner(V) : '') + layout(body);
+    const acting = V.me.realRole === 'admin' && V.me.role !== 'admin'
+      ? `<div class="acting">You are using Pick Timer as ${V.me.role === 'pia' ? 'a PIA' : 'a trainer'}. Anything you do here is real. <button class="btn sm" data-role-back>Back to Admin</button></div>` : '';
+    $app.innerHTML = (window.PREVIEW_API ? window.PREVIEW_API.banner(V) : '') + layout(acting + body);
     if (p === 'analytics' && !ui.analytics) loadAnalytics();
     if (p === 'admin' && r.parts[1] === 'sheet' && ui.appsScript == null) API.appsScript().then(t => { ui.appsScript = t || ''; render(); });
   }
@@ -209,8 +216,8 @@ ${list.map(s => `<tr class="click" data-act="openSession" data-id="${s.id}"><td 
       const comp = closing ? `<select data-mark="${a.id}" data-k="completion"><option value="">Choose…</option>${opt('completed', 'KC completed', m.completion)}${opt('not_completed', 'KC not completed', m.completion)}</select>
 ${m.completion === 'not_completed' ? `<div class="row" style="margin-top:6px;flex-wrap:nowrap"><select data-mark="${a.id}" data-k="reason"><option value="">Reason…</option>${C.REASONS.map(x => opt(x, x, m.reason)).join('')}</select>${m.reason === 'Other' ? `<input data-mark="${a.id}" data-k="reasonNote" value="${h(m.reasonNote)}" placeholder="Describe">` : ''}</div>` : ''}`
         : a.completion === 'completed' ? '<span class="b good">Completed</span>' : a.completion === 'not_completed' ? `<span class="b bad">Not completed</span> <span class="muted small">${h(a.reason)}${a.reasonNote ? ': ' + h(a.reasonNote) : ''}</span>` : '<span class="muted">—</span>';
-      const sc = !showScores ? '' : res ? `<td class="num">${h(res.score)}</td><td class="num">${res.obtained}%</td><td class="num">${res.passing}%</td><td><span class="b ${res.pass ? 'pass' : 'fail'}">${res.pass ? 'Pass' : 'Fail'}</span>${res.kcMismatch ? `<div class="small" style="color:var(--warn)">Sheet KC: ${h(res.kcName)}</div>` : ''}</td>`
-        : `<td colspan="4" class="muted small">${(closing ? m.completion : a.completion) === 'completed' ? '<span style="color:var(--warn)">No row in the score sheet yet</span>' : ''}</td>`;
+      const sc = !showScores ? '' : res ? `<td class="num">${res.obtained}%</td><td><span class="b ${res.pass ? 'pass' : 'fail'}">${res.pass ? 'Pass' : 'Fail'}</span>${res.kcMismatch ? `<div class="small" style="color:var(--warn)">Sheet KC: ${h(res.kcName)}</div>` : ''}</td>`
+        : `<td colspan="2" class="muted small">${(closing ? m.completion : a.completion) === 'completed' ? '<span style="color:var(--warn)">No row in the score sheet yet</span>' : ''}</td>`;
       return `<tr><td class="mono">${h(a.empId)}</td><td>${h(a.name)}</td><td class="small">${h(a.email)}</td>${showScores ? `<td style="min-width:200px">${comp}</td>${sc}` : ''}</tr>`;
     }).join('');
     const counts = s.attendees.reduce((c, a) => { const m = closing ? marks[a.id] : a; if (m?.completion === 'completed') c.done++; else if (m?.completion === 'not_completed') c.not++; if (a.result) c.scored++; return c; }, {done:0, not:0, scored:0});
@@ -223,7 +230,7 @@ ${action}
 <div class="card flush"><div style="padding:16px 18px 6px" class="row"><h2 style="margin:0;flex:1">Attendees (${s.attendees.length})</h2>
 ${showScores ? `<span class="muted small">${counts.done} completed · ${counts.not} not completed · ${counts.scored} scores found${V.settings.lastSync ? ` · sheet last read ${when(V.settings.lastSync)}` : ''}</span>` : ''}</div>
 ${closing ? `<p class="muted small" style="padding:0 18px">Mark each attendee, then pull their scores from the PIA score sheet. Submitting locks the session; anyone not completed needs a new booking.</p>` : ''}
-<div class="scroll"><table class="t"><thead><tr><th>Emp ID</th><th>Name</th><th>Email ID</th>${showScores ? '<th>KC completed?</th><th class="num">Score</th><th class="num">Obtained</th><th class="num">Passing</th><th>Result</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
+<div class="scroll"><table class="t"><thead><tr><th>Emp ID</th><th>Name</th><th>Email ID</th>${showScores ? '<th>KC completed?</th><th class="num">Obtained</th><th>Status</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
 ${closing ? `<div class="row" style="padding:14px 18px;border-top:1px solid var(--line-2)"><button class="btn" data-act="saveMarks" data-id="${s.id}">Save marks</button><button class="btn" data-act="pull" data-id="${s.id}">Pull scores from sheet</button>
 <span style="flex:1"></span><button class="btn primary" data-act="submitSession" data-id="${s.id}">Submit session</button></div>` : ''}</div>`;
   }
@@ -303,13 +310,13 @@ ${filters}
 ${a.days.map(d => `<tr><td class="nowrap">${h(shortDate(d.date))}</td><td class="num">${d.assigned}</td><td class="num">${d.attendees}</td><td class="num">${d.completed}</td><td class="num">${d.notCompleted}</td><td class="num">${d.pass}</td><td class="num">${d.fail}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No KCs in this range.</td></tr>'}</tbody></table></div></div>
 <div class="card flush"><h2 style="padding:16px 18px 4px">KC-wise results</h2><div class="scroll"><table class="t"><thead><tr><th>KC</th><th class="num">Attendees</th><th class="num">Pass</th><th class="num">Fail</th><th class="num">Pass rate</th><th></th></tr></thead><tbody>
 ${a.kcs.map(k => `<tr><td>${h(k.kc)}<div class="muted small">${h(k.type)} · ${k.sessions} session${k.sessions === 1 ? '' : 's'}</div></td><td class="num">${k.attendees}</td><td class="num">${k.pass}</td><td class="num">${k.fail}</td><td class="num">${k.passRate == null ? '—' : k.passRate + '%'}</td><td>${bar(k)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No KCs in this range.</td></tr>'}</tbody></table></div></div></div>
-<details class="card"><summary>Attendee results (${a.detail.length})</summary><div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th>Date</th><th>KC</th><th>Mode</th><th>Emp ID</th><th>Name</th><th>Trainer</th><th>Status</th><th class="num">Obtained</th><th class="num">Passing</th><th>Result</th></tr></thead><tbody>
-${a.detail.slice(0, 500).map(d => `<tr><td class="nowrap">${h(shortDate(d.date))}</td><td>${h(d.kc)}</td><td>${modeB(d.mode)}</td><td class="mono">${h(d.empId)}</td><td>${h(d.name)}</td><td>${h(d.trainer)}</td><td class="small">${h(d.status)}</td><td class="num">${d.obtained === '' ? '' : d.obtained + '%'}</td><td class="num">${d.passing === '' ? '' : d.passing + '%'}</td><td>${d.result ? `<span class="b ${d.result === 'Pass' ? 'pass' : 'fail'}">${d.result}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></details>`;
+<details class="card"><summary>Attendee results (${a.detail.length})</summary><div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th>Date</th><th>KC</th><th>Mode</th><th>Emp ID</th><th>Name</th><th>Trainer</th><th>Status</th><th class="num">Obtained</th><th>Result</th></tr></thead><tbody>
+${a.detail.slice(0, 500).map(d => `<tr><td class="nowrap">${h(shortDate(d.date))}</td><td>${h(d.kc)}</td><td>${modeB(d.mode)}</td><td class="mono">${h(d.empId)}</td><td>${h(d.name)}</td><td>${h(d.trainer)}</td><td class="small">${h(d.status)}</td><td class="num">${d.obtained === '' ? '' : d.obtained + '%'}</td><td>${d.result ? `<span class="b ${d.result === 'Pass' ? 'pass' : 'fail'}">${d.result}</span>` : ''}</td></tr>`).join('')}</tbody></table></div></details>`;
   }
   function downloadCsv(kind) {
     const a = ui.analytics; if (!a || a.error) return;
     const cols = kind === 'kcs' ? [['kc', 'KC'], ['type', 'KC Type'], ['sessions', 'Sessions'], ['attendees', 'Attendees'], ['completed', 'Completed'], ['notCompleted', 'Not completed'], ['pass', 'Pass'], ['fail', 'Fail'], ['passRate', 'Pass rate %']]
-      : [['date', 'Date of KC'], ['slot', 'Slot'], ['mode', 'Mode of KC'], ['kc', 'KC Name'], ['kcType', 'KC Type'], ['category', 'Category'], ['attempt', 'Attempt'], ['trainer', "Trainer's Name"], ['invigilator', 'Invigilator'], ['empId', 'Emp ID'], ['name', 'Name'], ['email', 'Email ID'], ['status', 'Status'], ['score', 'Score'], ['obtained', 'Obtained Percentage'], ['passing', 'Passing percentage'], ['result', 'Result']];
+      : [['date', 'Date of KC'], ['slot', 'Slot'], ['mode', 'Mode of KC'], ['kc', 'KC Name'], ['kcType', 'KC Type'], ['category', 'Category'], ['attempt', 'Attempt'], ['trainer', "Trainer's Name"], ['invigilator', 'Invigilator'], ['empId', 'Emp ID'], ['name', 'Name'], ['email', 'Email ID'], ['status', 'KC completed?'], ['obtained', 'Obtained Percentage'], ['result', 'Status']];
     const rows = kind === 'kcs' ? a.kcs : a.detail;
     const cell = v => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${(/^[=+\-@]/.test(s) ? "'" : '') + s.replace(/"/g, '""')}"` : s; };
     const csv = [cols.map(c => c[1]).join(','), ...rows.map(r => cols.map(c => cell(r[c[0]])).join(','))].join('\r\n');
@@ -342,7 +349,7 @@ ${editing && !editing.builtin ? `<label class="check"><input type="checkbox" nam
     return `<div class="grid2" style="grid-template-columns:2fr 1fr"><div class="card flush scroll"><table class="t"><thead><tr><th>KC name</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>
 ${V.kcs.map(k => `<tr${k.active !== false ? '' : ' style="opacity:.55"'}><td>${h(k.name)}</td><td>${h(k.type)}</td><td>${k.active !== false ? 'Active' : 'Hidden'}</td><td class="right"><a href="#/admin/kcs?edit=${k.id}">Edit</a></td></tr>`).join('') || '<tr><td colspan="4" class="muted">No KCs yet.</td></tr>'}</tbody></table></div>
 <form class="card" data-form="saveKc" data-id="${editing ? editing.id : ''}"><h2>${editing ? 'Edit KC' : 'Add a KC'}</h2><div class="form">
-<label class="f">KC name<input name="name" value="${h(editing?.name || '')}" required><span class="muted small">Use the same name as the "Sub Team/KC Name" column in the score sheet.</span></label>
+<label class="f">KC name<input name="name" value="${h(editing?.name || '')}" required></label>
 <label class="f">KC type<select name="type">${C.KC_TYPES.map(x => opt(x, x, editing?.type || 'Objective')).join('')}</select></label>
 ${editing ? `<label class="check"><input type="checkbox" name="active" ${editing.active !== false ? 'checked' : ''}> Active (shown when booking)</label>` : ''}
 <div class="row"><button class="btn primary">${editing ? 'Save' : 'Add KC'}</button>${editing ? '<a class="btn ghost" href="#/admin/kcs">Cancel</a>' : ''}</div></div></form></div>`;
@@ -380,7 +387,7 @@ ${ui.appsScript == null ? '<p class="muted">Loading the script…</p>' : `<pre c
 <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" data-act="testSheet">Test connection</button><button type="button" class="btn" data-act="syncNow">Sync now</button></div>
 ${ui.sheetTest ? `<div class="note ${ui.sheetTest.missing?.length ? 'warn' : 'good'}" style="margin-top:12px">${ui.sheetTest.error ? h(ui.sheetTest.error) : `Connected to "${h(ui.sheetTest.sheet)}": ${ui.sheetTest.rows} rows. ${ui.sheetTest.missing.length ? `Missing columns: <b>${h(ui.sheetTest.missing.join(', '))}</b>.` : 'All required columns found.'}<br><span class="small">Headers: ${h(ui.sheetTest.headers.join(' · '))}</span>`}</div>` : ''}
 ${last ? `<p class="small muted" style="margin-top:12px">Last read ${when(last.at)}: ${last.error ? `<span style="color:var(--bad)">${h(last.error)}</span>` : `${last.rows} rows, ${last.added} new, ${last.updated} updated, ${last.skipped.length} skipped.`} <a href="#/admin/synclog">Sync log</a></p>` : ''}
-<p class="muted small" style="margin-top:12px">Required columns: ${h(['Emp ID', 'Sub Team/KC Name', 'Date of KC', 'Attempt', 'Obtained Percentage', 'Passing percentage'].join(', '))}. Columns are found by their header names, so order does not matter, but do not rename them.</p></form>`;
+<p class="muted small" style="margin-top:12px">Required columns: ${h(['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'].join(', '))}. Status must say Pass or Fail. Columns are found by their header names, so order does not matter, but do not rename them. A score is matched to an attendee by Emp ID, Date of KC and Attempt.</p></form>`;
   }
   function adminEmailLog() {
     return `<div class="card flush scroll"><table class="t"><thead><tr><th>Time</th><th>To</th><th>Subject</th><th>Status</th></tr></thead><tbody>
@@ -503,6 +510,9 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
     catch (e) { if (e.status === 401) { location.href = '../auth/login?next=' + encodeURIComponent(location.pathname); return; } V = null; B = {site:'Pick Timer', error:'Could not reach the server. ' + e.message}; }
     render();
   }
+  function switchRole(role) { setViewAs(role); ui.analytics = null; ui.marks = {}; ui.book = null; if (location.hash) location.hash = ''; boot(); }
+  document.addEventListener('change', e => { if (e.target.matches('[data-role-switch]')) switchRole(e.target.value); });
+  document.addEventListener('click', e => { if (e.target.closest('[data-role-back]')) switchRole('admin'); });
   window.KCApp = {boot, render, get view() { return V; }};
   boot();
 })();

@@ -106,6 +106,9 @@ function createPickTimer(opts) {
     });
   }
 
+  // The role an administrator has switched to (Core ignores it for everyone else).
+  const role = req => String(req.headers['x-kc-role'] || '').toLowerCase();
+
   /** sub: the path after /pick-timer/ ('' for the page). who: the signed-in Trainer Desk user. */
   async function handle(req, res, sub, who) {
     try {
@@ -119,7 +122,7 @@ function createPickTimer(opts) {
 
       if (req.method === 'GET' && sub === 'api/boot') {
         const me = userFor(who);
-        if (me) { if (!me.lastLogin || Date.now() - me.lastLogin > 3600e3) await mutate(() => { me.lastLogin = Date.now(); }); return send(res, 200, {view: Core.view(S, me.id, Date.now())}); }
+        if (me) { if (!me.lastLogin || Date.now() - me.lastLogin > 3600e3) await mutate(() => { me.lastLogin = Date.now(); }); return send(res, 200, {view: Core.view(S, me.id, Date.now(), role(req))}); }
         return send(res, 200, {noAccess: true, email: who.email, site: S.settings.name});
       }
       if (req.method === 'POST' && sub === 'api/op') {
@@ -127,8 +130,8 @@ function createPickTimer(opts) {
         if (!me) return send(res, 403, {error: `${who.email} does not have access to ${S.settings.name}. Ask an administrator to add you.`});
         const b = await readBody(req);
         if (b.op === 'saveSettings' && b.params && b.params.section === 'sso') return send(res, 400, {error: 'Sign-in is handled by Trainer Desk.'});
-        const result = await mutate(() => Core.run(S, env, me.id, String(b.op || ''), b.params || {}));
-        return send(res, 200, {result, view: Core.view(S, me.id, Date.now())});
+        const result = await mutate(() => Core.run(S, env, me.id, String(b.op || ''), b.params || {}, role(req)));
+        return send(res, 200, {result, view: Core.view(S, me.id, Date.now(), role(req))});
       }
       return send(res, 404, {error: 'Not found.'});
     } catch (e) {

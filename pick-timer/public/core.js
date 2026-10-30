@@ -268,9 +268,18 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
 
   /* ---------- score sheet ---------- */
   const H = s => norm(s).replace(/[^a-z0-9]/g, '');
-  const SHEET_COLS = {month:'Month', invigilator:'Invigilator', mode:'Mode of KC', kcType:'KC Type', trainer:"Trainer's Name", category:'Category', empId:'Emp ID', email:'Email ID', name:'Name', team:'Team', kcName:'Sub Team/KC Name', date:'Date of KC', attempt:'Attempt', score:'Score', obtained:'Obtained Percentage', passing:'Passing percentage'};
-  const REQUIRED = ['empId', 'kcName', 'date', 'attempt', 'obtained', 'passing'];
-  const ALIASES = {kcName:['subteamkcname', 'subteam', 'kcname'], obtained:['obtainedpercentage', 'obtained', 'obtainedpercent'], passing:['passingpercentage', 'passing', 'passingpercent', 'passpercentage'], empId:['empid', 'employeeid'], email:['emailid', 'email'], date:['dateofkc', 'kcdate'], trainer:['trainersname', 'trainername', 'trainer']};
+  // PIA's KC Sheet has five columns: Date of KC, Emp ID, Attempt, Obtained Percentage, Status (Pass or Fail).
+  // The others are read when a sheet has them, but are not needed.
+  const SHEET_COLS = {date:'Date of KC', empId:'Emp ID', attempt:'Attempt', obtained:'Obtained Percentage', status:'Status',
+    name:'Name', email:'Email ID', kcName:'Sub Team/KC Name', score:'Score', passing:'Passing percentage'};
+  const REQUIRED = ['date', 'empId', 'attempt', 'obtained', 'status'];
+  const ALIASES = {kcName:['subteamkcname', 'subteam', 'kcname'], obtained:['obtainedpercentage', 'obtained', 'obtainedpercent'], passing:['passingpercentage', 'passing', 'passingpercent', 'passpercentage'], empId:['empid', 'employeeid'], email:['emailid', 'email'], date:['dateofkc', 'kcdate'], status:['status', 'result', 'kcstatus']};
+  function parseStatus(v) {
+    const s = H(v);
+    if (/^(pass|passed|cleared|clear|qualified)$/.test(s)) return true;
+    if (/^(fail|failed|notcleared|notqualified)$/.test(s)) return false;
+    return null;
+  }
   function parseSheetDate(v) {
     const s = String(v || '').trim(); if (!s) return null;
     let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return mk(+m[1], +m[2], +m[3]);
@@ -308,19 +317,18 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       const date = parseSheetDate(get('date')); if (!date) return skip(`Date of KC "${get('date')}" is not a date`);
       const attempt = parseAttempt(get('attempt')); if (!attempt) return skip('No attempt number');
       const obtained = parsePercent(get('obtained')); if (obtained == null) return skip('No Obtained Percentage');
-      const passing = parsePercent(get('passing')); if (passing == null) return skip('No Passing percentage');
-      const kc = get('kcName'); if (!kc) return skip('No Sub Team/KC Name');
-      const key = `${norm(empId)}|${norm(kc)}|${attempt}`;
-      if (fresh.has(key)) log.skipped.push({row:fresh.get(key).row, reason:`Replaced by row ${rowNo} (same Emp ID, KC and attempt)`, empId, name:get('name')});
-      fresh.set(key, {key, row:rowNo, empId, name:get('name'), email:get('email'), kcName:kc, date, attempt, score:get('score'), obtained:round(obtained), passing:round(passing),
-        pass:obtained >= passing, invigilator:get('invigilator'), mode:get('mode'), kcType:get('kcType'), trainer:get('trainer'), category:get('category'), team:get('team')});
+      const pass = parseStatus(get('status')); if (pass == null) return skip(get('status') ? `Status "${get('status')}" is not Pass or Fail` : 'No Status');
+      const passing = parsePercent(get('passing')), kc = get('kcName');
+      const key = `${norm(empId)}|${date}|${attempt}`;
+      if (fresh.has(key)) log.skipped.push({row:fresh.get(key).row, reason:`Replaced by row ${rowNo} (same Emp ID, Date of KC and attempt)`, empId, name:get('name')});
+      fresh.set(key, {key, row:rowNo, empId, name:get('name'), email:get('email'), kcName:kc, date, attempt, score:get('score'), obtained:round(obtained), passing:passing == null ? '' : round(passing), pass});
     });
     const old = new Map(S.results.map(r => [r.key, r]));
     const next = [];
     for (const [key, r] of fresh) {
       const o = old.get(key);
       if (!o) { log.added++; next.push({id:env.uid('r'), ...r, pulledAt:env.now()}); continue; }
-      const changed = ['date', 'score', 'obtained', 'passing', 'name', 'email', 'kcName', 'empId'].some(f => o[f] !== r[f]);
+      const changed = ['date', 'score', 'obtained', 'passing', 'pass', 'name', 'email', 'kcName', 'empId'].some(f => o[f] !== r[f]);
       if (changed) log.updated++; else log.unchanged++;
       next.push({...o, ...r, id:o.id, pulledAt:changed ? env.now() : o.pulledAt});
     }
@@ -337,7 +345,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     if (!hits.length) return null;
     const want = norm(kcName(S, s.assignedKcId || s.requestedKcId));
     const r = hits.find(x => norm(x.kcName) === want) || hits[0];
-    return {...r, kcMismatch:norm(r.kcName) !== want};
+    return {...r, kcMismatch:!!r.kcName && norm(r.kcName) !== want};
   }
 
   ops.pullScores = async (S, env, me, p) => {
@@ -475,15 +483,21 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   };
 
   /* ---------- running an operation ---------- */
-  async function run(S, env, meId, name, params) {
-    const me = byId(S.users, meId); need(me && me.active !== false, 'Please sign in again.', 401);
+  /* An administrator can switch to another role to use Pick Timer as a PIA or a trainer would. Only the
+     administrator's own role changes, for their own requests; everyone else's access is untouched. */
+  function actingAs(S, meId, asRole) {
+    const me = byId(S.users, meId); if (!me) return null;
+    return me.role === 'admin' && ROLES.includes(asRole) && asRole !== 'admin' ? {...me, role:asRole, realRole:'admin'} : me;
+  }
+  async function run(S, env, meId, name, params, asRole) {
+    const me = actingAs(S, meId, asRole); need(me && me.active !== false, 'Please sign in again.', 401);
     need(Object.prototype.hasOwnProperty.call(ops, name), 'Unknown action.', 404);
     return await ops[name](S, env, me, params || {});
   }
 
   /* ---------- what each person may see ---------- */
-  function view(S, meId, now) {
-    const me = byId(S.users, meId); if (!me) return null;
+  function view(S, meId, now, asRole) {
+    const me = actingAs(S, meId, asRole); if (!me) return null;
     const today = istDate(now), since = addDays(today, -60);
     const mine = s => me.role !== 'trainer' || s.trainerId === me.id;
     const sessions = S.sessions.filter(s => mine(s) && (s.date >= since || OPEN.includes(s.status))).map(s => ({...s,
@@ -491,7 +505,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     const admin = isAdmin(me);
     const st = S.settings;
     return {
-      me:{id:me.id, name:me.name, email:me.email, role:me.role, builtin:!!me.builtin, mustChangePassword:!!me.mustChangePassword},
+      me:{id:me.id, name:me.name, email:me.email, role:me.role, realRole:me.realRole || me.role, builtin:!!me.builtin, mustChangePassword:!!me.mustChangePassword},
       now, today,
       consts:{HOURS, MODES, CATEGORIES, KC_TYPES, REASONS, ROLES, DEFAULT_CAP, SHEET_COLS},
       users:S.users.map(u => ({id:u.id, name:u.name, role:u.role, active:u.active !== false, ...(admin ? {email:u.email, builtin:!!u.builtin, lastLogin:u.lastLogin || null} : {})})),
@@ -559,23 +573,21 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
   /* A stand-in for PIA's Google Sheet, built from the demo sessions (preview and --demo only). */
   function demoSheet(S, now) {
-    const headers = Object.values(SHEET_COLS), rows = [];
+    const headers = ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'], rows = [];
     const today = istDate(now);
     for (const s of S.sessions) {
       if (!['assigned', 'submitted'].includes(s.status) || s.date > today) continue;
-      const kc = byId(S.kcs, s.assignedKcId), passing = s.attempt === 1 ? 75 : 70;
+      const passing = s.attempt === 1 ? 75 : 70;
       for (const a of S.attendees.filter(x => x.sessionId === s.id)) {
         if (a.completion === 'not_completed') continue;
-        const obtained = 60 + hash(a.empId + s.date) % 41, total = 22;
-        rows.push({row:rows.length + 2, cells:[MONTHS[Number(s.date.slice(5, 7)) - 1] + '-' + s.date.slice(2, 4), userName(S, s.invigilatorId), s.mode, kc?.type || '', userName(S, s.trainerId), s.category,
-          a.empId, a.email, a.name, kc?.name || '', kc?.name || '', `${Number(s.date.slice(8))}-${MONTHS[Number(s.date.slice(5, 7)) - 1]}-${s.date.slice(0, 4)}`, String(s.attempt),
-          String(Math.round(obtained / 100 * total)), `${obtained}%`, `${passing}%`]});
+        const obtained = 60 + hash(a.empId + s.date) % 41;
+        rows.push({row:rows.length + 2, cells:[`${Number(s.date.slice(8))}-${MONTHS[Number(s.date.slice(5, 7)) - 1]}-${s.date.slice(0, 4)}`, a.empId, String(s.attempt), `${obtained}%`, obtained >= passing ? 'Pass' : 'Fail']});
       }
     }
     return {ok:true, sheet:'KC Scores (demo)', headers, rows};
   }
 
   return {HOURS, MODES, CATEGORIES, KC_TYPES, ROLES, REASONS, DEFAULT_CAP, SHEET_COLS, OpError,
-    newState, run, ops, view, slotInfo, availability, applySheet, resultFor, parseSheetDate, parsePercent,
+    newState, run, ops, view, slotInfo, availability, applySheet, resultFor, parseSheetDate, parsePercent, parseStatus,
     istDate, addDays, weekday, slotStart, hourLabel, slotLabel, dateLabel, seedDemo, demoSheet, esc};
 });
