@@ -337,6 +337,7 @@
       '<header class="topbar"><div class="topbar-in">' +
         '<button class="wordmark home-link" data-tab="home" aria-label="Trainer Desk home"><i></i>Trainer Desk</button>' + picker +
         '<div class="who"><b>' + esc(s.name) + '</b><span class="chip">' + esc(s.roleLabel) + '</span>' + (s.isAdmin && s.role !== 'admin' ? '<span class="chip">Admin</span>' : '') + '</div>' +
+        (s.pickTimer ? '<a class="btn pick-btn" href="pick-timer/" title="KC slot booking and close-out"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>Pick Timer</a>' : '') +
         (s.isAdmin ? '<button class="btn appr-btn" data-tab="approvals">Approvals<span class="count' + (state.approvals && state.approvals.length ? ' hot' : '') + '">' + (state.approvals ? state.approvals.length : '…') + '</span></button>' : '') +
         '<button class="btn" id="signout">Sign out</button>' +
       '</div></header><div class="page">';

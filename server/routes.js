@@ -10,7 +10,11 @@ import * as whatsapp from './services/whatsapp.js';
 const r = new Router();
 const body = ctx => readJson(ctx.req);
 
-r.get('/api/session', ({ user }) => candidates.getSession(user));
+let pickTimerAccess = () => false;
+/** main.js tells the session whether this person can open Pick Timer (for the top-bar button). */
+export function setPickTimerAccess(fn) { pickTimerAccess = fn; }
+
+r.get('/api/session', ({ user }) => Object.assign(candidates.getSession(user), { pickTimer: pickTimerAccess(user) }));
 
 /* trainers */
 r.get('/api/trainers/:trainer/batches', ({ user, params }) => candidates.getTrainerBatches(user, params.trainer));

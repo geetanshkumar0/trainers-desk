@@ -5,12 +5,14 @@
  *   /auth/*              Google sign-in, company accounts only
  *   /admin/connect       connects the Google account that reads and writes the sheets (setup admins, once)
  *   /admin/status        sync, outbox and mirror status (setup admins)
+ *   /pick-timer/         Pick Timer: KC slot booking and PIA close-out (pick-timer/), same sign-in
  *   /healthz             liveness
  */
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { CONFIG, SERVER } from './config.js';
 import * as db from './db.js';
 import * as G from './google.js';
@@ -20,7 +22,8 @@ import * as outbox from './outbox.js';
 import * as mirror from './mirror.js';
 import * as ojt from './services/ojt.js';
 import { MODE as WA_MODE } from './services/whatsapp.js';
-import routes from './routes.js';
+import routes, { setPickTimerAccess } from './routes.js';
+import * as data from './data.js';
 import { isoDay } from './dates.js';
 import { send, json, redirect, html, esc, serveStatic } from './web.js';
 
@@ -28,6 +31,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, '..', 'public');
 const BASE = SERVER.base;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+const { createPickTimer } = createRequire(import.meta.url)('../pick-timer/server/mount.js');
+let pickTimer = null;
+
+/** Who is visiting, as Pick Timer needs to know: Trainer Desk admins are its admins, trainers its trainers. */
+function pickTimerUser(email) {
+  let s = null;
+  try { s = data.session(email); } catch (e) { s = null; }
+  return { email, name: s ? s.name : '', isAdmin: CONFIG.ADMIN_EMAILS.includes(email), isTrainer: !!(s && s.isTrainer) };
+}
 
 function page(title, body) {
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) +
@@ -89,6 +101,13 @@ async function handle(req, res) {
 
   const user = auth.userOf(req);
 
+  /* ---- Pick Timer ---- */
+  if (sub === '/pick-timer') return redirect(res, BASE + '/pick-timer/');
+  if (sub.startsWith('/pick-timer/')) {
+    if (!user) return sub === '/pick-timer/' ? redirect(res, BASE + '/auth/login?next=' + encodeURIComponent(BASE + '/pick-timer/')) : json(res, 401, { error: 'Please sign in again.' });
+    return pickTimer.handle(req, res, sub.slice('/pick-timer/'.length), pickTimerUser(user));
+  }
+
   /* ---- API ---- */
   if (sub.startsWith('/api/')) {
     if (!user) return json(res, 401, { error: 'Please sign in again.', login: true });
@@ -135,7 +154,9 @@ function startBackups() {
     if (fs.existsSync(file)) return;
     try {
       db.backup(file);
-      fs.readdirSync(dir).filter(f => /^trainer-desk-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0, -14).forEach(f => fs.unlinkSync(path.join(dir, f)));
+      if (pickTimer) pickTimer.backup(path.join(dir, 'pick-timer-' + day + '.db'));
+      fs.readdirSync(dir).filter(f => /^(trainer-desk|pick-timer)-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort((a, b) => a.slice(-13).localeCompare(b.slice(-13)))
+        .slice(0, -28).forEach(f => fs.unlinkSync(path.join(dir, f)));   // 14 days of both
       log('[backup] saved', file);
     } catch (e) { log('[backup] failed:', e.message); }
   };
@@ -145,6 +166,9 @@ function startBackups() {
 
 export function startServer() {
   db.open(SERVER.dbFile);
+  pickTimer = createPickTimer({ dataDir: SERVER.dataDir, demo: SERVER.demo, admins: CONFIG.ADMIN_EMAILS });
+  setPickTimerAccess(email => pickTimer.hasAccess(pickTimerUser(email)));
+  pickTimer.start();
   if (G.adoptOldTokenFile(path.join(SERVER.dataDir, 'sheets_token.json'))) log('sheets token brought over from sheets_token.json');
   const server = http.createServer((req, res) => {
     handle(req, res).catch(e => { log('ERROR', req.url, e.stack || e.message); if (!res.headersSent) send(res, 500, 'Server error'); });
@@ -160,7 +184,7 @@ export function startServer() {
     ojt.startDaily();
     startBackups();
   }
-  const stop = () => { log('stopping'); server.close(); sync.stop(); outbox.stop(); mirror.stop(); db.close(); process.exit(0); };
+  const stop = () => { log('stopping'); server.close(); sync.stop(); outbox.stop(); mirror.stop(); pickTimer.stop(); pickTimer.close(); db.close(); process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   return server;

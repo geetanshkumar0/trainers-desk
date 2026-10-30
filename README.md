@@ -19,6 +19,16 @@ Trainer Desk helps the T&D team run batches from day one to the end of OJT: uncl
 - **Database:** **SQLite**, built into Node.js (`node:sqlite`). One file: `data/trainer-desk.db`.
 - **Browser:** plain **HTML, CSS and JavaScript**. No React, Angular or other framework. (The 3D background uses the Three.js library, bundled in `public/vendor/`.)
 
+## Pick Timer (KC slot booking)
+
+The **Pick Timer** button in the top bar opens Pick Timer at `/pick-timer/`. It schedules Knowledge Checks: trainers book slots, the PIA team assigns and closes out each KC, scores are read from PIA's score sheet, and everyone sees daily results.
+
+- **Sign-in:** Trainer Desk's Google sign-in, with no second login.
+- **Who gets in:** Trainer Desk admins are built-in Pick Timer admins. Trainers in Trainer Desk are added as Trainers the first time they open it. The PIA team, and anyone else, are added by an admin under Pick Timer › Site administration › Users. The button only shows for people who can get in.
+- **Rules:** slots, seats, attempt-3 approvals, close-out and score matching are in `pick-timer/public/core.js`, unchanged from the stand-alone tool and tested in `pick-timer/test/core.test.js`.
+- **Data:** its own SQLite file, `data/pick-timer.db`, backed up every night with Trainer Desk's.
+- **Email and score sheet:** email goes out through Pick Timer's own SMTP settings (Site administration › Email; until it is turned on, emails wait in the Email log). Scores are read from PIA's sheet through the Apps Script under Site administration › Score sheet. Pick Timer never writes to Google.
+
 ## Only Trainer Desk's own work is shown
 
 Batches, Attendance, Active NHT Details, OJT Performance and Approvals show **only trainees claimed in Trainer Desk**, and only what was entered in Trainer Desk. That covers claims made in this version (the `claims` table) and in the previous Trainer Desk from 30 Oct 2026 on (it logged every candidate it assigned in the tracker's **WhatsApp Log** tab, read into `in_prior_claims`).
@@ -70,6 +80,10 @@ server/
   google.js          Google Sheets and Gmail API calls
   auth.js            Google sign-in and session cookies
   web.js             small HTTP helpers (router, JSON, static files)
+pick-timer/          Pick Timer, mounted at /pick-timer/ (CommonJS: its own package.json)
+  server/mount.js    runs it inside Trainer Desk: sign-in, roles, routes, email and score-sheet jobs
+  public/            its page; core.js holds all its rules (shared with the browser)
+  apps-script/       the script to paste into PIA's score sheet
 public/
   index.html         the page
   css/app.css        page styles;  css/theme.css  the visual design (loads last, so it wins)
