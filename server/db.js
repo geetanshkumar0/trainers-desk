@@ -29,7 +29,24 @@ export function open(file) {
  * on an existing table goes here, as the next item (never edit or reorder old ones). Each runs once.
  * Example: "ALTER TABLE attendance ADD COLUMN note TEXT NOT NULL DEFAULT ''"
  */
-const MIGRATIONS = [];
+const MIGRATIONS = [
+  // 30 Oct 2026: Trainer Desk goes into use. Remove everything recorded before that day (00:00 India time) - trial claims
+  // and the attendance, mocks, requests and OJT entries that went with them. Work saved from that day on stays.
+  // Marking the tabs dirty makes the mirror take Trainer Desk's own rows for the removed records out of the tracker too.
+  `DELETE FROM claims WHERE claimed_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM attendance WHERE marked_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM attendance_log WHERE changed_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM change_requests WHERE requested_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM mock_scores WHERE approved_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM nht_status WHERE updated_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM ojt_team WHERE updated_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM ojt_manual_inputs WHERE updated_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM whatsapp_log WHERE sent_on < '2026-10-29T18:30:00.000Z';
+   DELETE FROM ojt_dashboard; DELETE FROM ojt_performance;
+   INSERT OR REPLACE INTO mirror_dirty (tab, since) VALUES ('Attendance', '2026-10-29T18:30:00.000Z'), ('Attendance Log', '2026-10-29T18:30:00.000Z'), ('Change Requests', '2026-10-29T18:30:00.000Z'),
+     ('Mock Scores', '2026-10-29T18:30:00.000Z'), ('NHT Status', '2026-10-29T18:30:00.000Z'), ('OJT Team', '2026-10-29T18:30:00.000Z'), ('OJT Manual Inputs', '2026-10-29T18:30:00.000Z'), ('OJT Dashboard', '2026-10-29T18:30:00.000Z'),
+     ('OJT Performance', '2026-10-29T18:30:00.000Z'), ('WhatsApp Log', '2026-10-29T18:30:00.000Z');`
+];
 
 function migrate() {
   const at = db.prepare('PRAGMA user_version').get().user_version;

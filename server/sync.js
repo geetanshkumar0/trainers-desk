@@ -141,7 +141,8 @@ export function ingestTracker(grids, locale, since) {
   const prior = {};
   (grids[CONFIG.CLAIM_LOG_SHEET] || []).forEach((r, i) => {
     const id = normId((r || [])[2]);
-    if (i && id && !prior[id]) prior[id] = { emp_id: id, trainer: norm(r[1]), claimed_on: dateOf(r[0]) };
+    const on = dateOf(r[0]);
+    if (i && id && !prior[id] && on >= CONFIG.START_DATE) prior[id] = { emp_id: id, trainer: norm(r[1]), claimed_on: on };   // only from the start date
   });
 
   const templates = {};

@@ -21,7 +21,9 @@ Trainer Desk helps the T&D team run batches from day one to the end of OJT: uncl
 
 ## Only Trainer Desk's own work is shown
 
-Batches, Attendance, Active NHT Details, OJT Performance and Approvals show **only trainees claimed in Trainer Desk**, and only what was entered in Trainer Desk. That covers claims made in this version (the `claims` table) and in the previous Trainer Desk, which logged every candidate it assigned in the tracker's **WhatsApp Log** tab (read into `in_prior_claims`). Nothing is imported from the old Attendance, Mock Scores, Change Requests or other tabs.
+Batches, Attendance, Active NHT Details, OJT Performance and Approvals show **only trainees claimed in Trainer Desk**, and only what was entered in Trainer Desk. That covers claims made in this version (the `claims` table) and in the previous Trainer Desk from 30 Oct 2026 on (it logged every candidate it assigned in the tracker's **WhatsApp Log** tab, read into `in_prior_claims`).
+
+**Fresh start on 30 Oct 2026.** Trainer Desk went into use that day (`START_DATE` in `server/config.js`). On the first start of this version, a one-time clean-up removes everything recorded before then: claims, attendance and its log, change requests, mocks, NHT status, OJT team and inputs, the OJT list and the WhatsApp log. The rows Trainer Desk wrote for them in the tracker tabs are removed as well. Work saved from 30 Oct on is kept. Master Dashboard is not touched, and admins' removals from the unclaimed list stay. Nothing is imported from the old Attendance, Mock Scores, Change Requests or other tabs.
 
 The full live data (Master Dashboard, HR, KC, Talktime and the rest) is still read into the database, because it is needed to list unclaimed candidates, to fill in a claimed trainee's details and KC, and for the **Performance Dashboards (Old and New), which are the only screens that count everyone**.
 

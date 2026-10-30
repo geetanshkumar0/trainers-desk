@@ -153,7 +153,10 @@ export function startServer() {
   outbox.start();
   if (!SERVER.demo) {
     // Trainer Desk starts with only its own data: nothing is imported from the old app tabs.
-    sync.start(SERVER.refreshSeconds).then(() => mirror.start());
+    sync.start(SERVER.refreshSeconds).then(() => {
+      try { ojt.buildOjtDashboard(); } catch (e) { log('[ojt] rebuild at start failed:', e.message); }   // from the data already here
+      mirror.start();
+    });
     ojt.startDaily();
     startBackups();
   }

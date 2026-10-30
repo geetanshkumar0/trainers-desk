@@ -57,6 +57,9 @@ export const CONFIG = {
     'PMS Sales': { score: 3.6 }, 'CPMS Servicing': { score: 3.6 }, 'PnM Sales': { score: 3.6 },
     '*': { achievement: 0.7 }
   },
+  // Trainer Desk went into use on this day: claims made in the previous Trainer Desk before it do not count,
+  // and everything recorded here before it was removed (see MIGRATIONS in db.js).
+  START_DATE: '2026-10-30',
   UNCLAIMED_FROM: '2026-10-21',               // unclaimed list only shows people who joined on or after this date (DOJ after 20 Oct)
   MAX_ASSIGN: 200,
   MAX_EXCLUDE: 3000,
