@@ -62,6 +62,24 @@ function createPickTimer(opts) {
     }
   }
   syncAdmins();
+
+  /* PIA's KC names (server/kc-list.js), added once to the KC list. Names already in the list (any case or spacing)
+     are left as they are, and nothing is added back later if an administrator renames or turns one off. */
+  const KC_LIST_VERSION = 1;
+  function addKcList() {
+    if ((S.kcListVersion || 0) >= KC_LIST_VERSION) return 0;
+    const key = n => String(n).replace(/\s+/g, ' ').trim().toLowerCase();
+    const have = new Set(S.kcs.map(k => key(k.name)));
+    let added = 0;
+    for (const name of require('./kc-list.js')) {
+      if (have.has(key(name))) continue;
+      S.kcs.push({id: env.uid('k'), name, type: 'Objective', active: true}); have.add(key(name)); added++;
+    }
+    S.kcListVersion = KC_LIST_VERSION;
+    if (added) log(`added ${added} KC names to the KC list`);
+    return added;
+  }
+  addKcList();
   store.save(S);
 
   /* Operations run one at a time, so seat counts can never race. */

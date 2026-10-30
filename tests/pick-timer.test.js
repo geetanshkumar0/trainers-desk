@@ -76,8 +76,10 @@ test("Pick Timer's admins and roles are its own: Trainer Desk admins and trainer
 });
 
 test('a trainer books a KC, a PIA member added by the admin assigns it', async () => {
-  const kc = await op(ADMIN, 'saveKc', { name: 'Legal Services', type: 'Objective' });
-  assert.equal(kc.status, 200, JSON.stringify(kc.data));
+  // PIA's KC names are already in the list; adding one again is refused.
+  assert.match((await op(ADMIN, 'saveKc', { name: 'legal  services', type: 'Objective' })).data.error, /already exists/);
+  const kcId = (await as(ADMIN, 'GET', 'api/boot')).data.view.kcs.find(k => k.name === 'Legal Services').id;
+  const kc = { data: { result: { kcId } } };
   const add = await op(ADMIN, 'saveUser', { name: 'Rahul', email: 'rahul.pia@nobroker.in', role: 'pia' });
   assert.equal(add.status, 200);
   const date = nextWorkday(3);
@@ -165,4 +167,13 @@ test('a Pick Timer admin can switch role for their own requests; others cannot',
   assert.equal(refused.status, 403);
   const pia = await as('rahul.pia@nobroker.in', 'GET', 'api/boot', null, { 'X-KC-Role': 'admin' });
   assert.equal(pia.data.view.me.role, 'pia');
+});
+
+test('PIA\'s KC names are in the KC list once, without duplicates', async () => {
+  const names = createRequire(import.meta.url)('../pick-timer/server/kc-list.js');
+  const v = (await as(ADMIN, 'GET', 'api/boot')).data.view;
+  const list = v.kcs.map(k => k.name.toLowerCase());
+  for (const n of ['CPMS Sales 1', 'Knowledge Check - Investment Advisory (Buyer servicing)', 'Plot RM Servicing', 'BAPS - Pre-sales KC']) assert.ok(list.includes(n.toLowerCase()), n);
+  assert.equal(new Set(list).size, list.length, 'no duplicates');
+  assert.equal(names.length, 100);
 });

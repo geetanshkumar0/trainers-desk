@@ -411,7 +411,8 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   ops.saveKc = (S, env, me, p) => {
     need(isAdmin(me), 'Only the administrator can manage the KC list.', 403);
     const name = str(p.name, 'KC name', 150); need(KC_TYPES.includes(p.type), 'Choose Objective or Subjective.');
-    need(!S.kcs.some(k => norm(k.name) === norm(name) && k.id !== p.id), 'A KC with this name already exists.', 409);
+    const same = x => norm(x).replace(/\s+/g, ' ');
+    need(!S.kcs.some(k => same(k.name) === same(name) && k.id !== p.id), 'A KC with this name already exists.', 409);
     let k = p.id ? byId(S.kcs, p.id) : null; if (p.id) need(k, 'KC not found.', 404);
     if (!k) { k = {id:env.uid('k')}; S.kcs.push(k); }
     Object.assign(k, {name, type:p.type, active:p.active !== false});
