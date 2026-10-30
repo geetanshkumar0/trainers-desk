@@ -144,7 +144,7 @@ test('close-out: every attendee marked, scores found for the completed ones, the
   const r = await run('pia', 'pullScores', {sessionId});
   assert.equal(r.matched, 2);
   const v = C.view(S, 'pia', NOW).sessions[0];
-  assert.deepEqual(v.attendees.map(a => a.result && [a.result.obtained, a.result.pass]), [[85, true], [60, false], null], 'matched by Emp ID, Date of KC and Attempt');
+  assert.deepEqual(v.attendees.map(a => a.result && [a.result.obtained, a.result.pass]), [[85, true], [60, false], null], 'matched by Emp ID (and the same attempt)');
   assert.equal(v.attendees[0].result.kcMismatch, false, 'the sheet has no KC name column');
   await run('pia', 'submitSession', {sessionId});
   assert.equal(S.sessions[0].status, 'submitted');
@@ -158,7 +158,7 @@ test('submit is refused while a completed attendee has no score in the sheet', a
   const {sessionId} = await run('t1', 'book', booking({attendees:people(1)}));
   await run('pia', 'assignKc', {sessionId, kcId:'k1'});
   await run('pia', 'markAttendees', {sessionId, marks:[{attendeeId:S.attendees[0].id, completion:'completed'}]});
-  await rejects(run('pia', 'submitSession', {sessionId}), /No score in the sheet yet for: Person 1 \(NB1\)/);
+  await rejects(run('pia', 'submitSession', {sessionId}), /No row with their Emp ID in the score sheet yet for: Person 1 \(NB1\)/);
 });
 test('slot capacity cannot drop below seats already booked', async () => {
   const {run} = world();
@@ -212,4 +212,18 @@ test('an administrator can switch to the PIA or trainer role; nobody else can', 
   // Switched to trainer, admin-only actions are refused.
   await rejects(C.run(S, {now:() => NOW, uid:p => p}, 'admin', 'reopenSession', {sessionId}, 'trainer'), /Only the administrator/);
   assert.equal(S.users.find(u => u.id === 'admin').role, 'admin', 'the stored role never changes');
+});
+
+test('scores are matched by Emp ID, even when the sheet has another date', async () => {
+  const {S, run, sheet} = world();
+  const {sessionId} = await run('t1', 'book', booking({attendees:people(3), attempt:2}));
+  await run('pia', 'assignKc', {sessionId, kcId:'k1'});
+  Object.assign(sheet, {headers:HEAD, rows:[
+    row(' nb1', '01/11/2026', '2', '88%'),                                   // typed a day late, odd spacing and case
+    row('NB2', '2026-10-20', '1', '40%', 'Fail'), row('NB2', '2026-10-31', '2', '81%'), // attempt 1 and attempt 2
+    row('NB3', '2026-10-10', '1', '55%', 'Fail')]});                          // only an older attempt in the sheet
+  const r = await run('pia', 'pullScores', {sessionId});
+  assert.equal(r.matched, 3);
+  const v = C.view(S, 'pia', NOW).sessions[0].attendees.map(a => a.result);
+  assert.deepEqual(v.map(x => [x.obtained, x.pass, x.dateDiffers, x.attemptDiffers]), [[88, true, true, false], [81, true, false, false], [55, false, true, true]]);
 });
