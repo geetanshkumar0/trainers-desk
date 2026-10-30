@@ -158,7 +158,7 @@ test('submit is refused while a completed attendee has no score in the sheet', a
   const {sessionId} = await run('t1', 'book', booking({attendees:people(1)}));
   await run('pia', 'assignKc', {sessionId, kcId:'k1'});
   await run('pia', 'markAttendees', {sessionId, marks:[{attendeeId:S.attendees[0].id, completion:'completed'}]});
-  await rejects(run('pia', 'submitSession', {sessionId}), /No row with their Emp ID in the score sheet yet for: Person 1 \(NB1\)/);
+  await rejects(run('pia', 'submitSession', {sessionId}), /No row with their Emp ID and this attempt in the score sheet yet for: Person 1 \(NB1\)/);
 });
 test('slot capacity cannot drop below seats already booked', async () => {
   const {run} = world();
@@ -223,7 +223,8 @@ test('scores are matched by Emp ID, even when the sheet has another date', async
     row('NB2', '2026-10-20', '1', '40%', 'Fail'), row('NB2', '2026-10-31', '2', '81%'), // attempt 1 and attempt 2
     row('NB3', '2026-10-10', '1', '55%', 'Fail')]});                          // only an older attempt in the sheet
   const r = await run('pia', 'pullScores', {sessionId});
-  assert.equal(r.matched, 3);
+  assert.equal(r.matched, 2);
   const v = C.view(S, 'pia', NOW).sessions[0].attendees.map(a => a.result);
-  assert.deepEqual(v.map(x => [x.obtained, x.pass, x.dateDiffers, x.attemptDiffers]), [[88, true, true, false], [81, true, false, false], [55, false, true, true]]);
+  assert.deepEqual(v.slice(0, 2).map(x => [x.obtained, x.pass, x.dateDiffers]), [[88, true, true], [81, true, false]]);
+  assert.equal(v[2], null, 'an older attempt in the sheet is not used for this attempt');
 });

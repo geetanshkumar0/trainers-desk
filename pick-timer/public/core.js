@@ -255,7 +255,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     const unmarked = atts.filter(a => !a.completion);
     need(!unmarked.length, `Mark every attendee first: ${unmarked.map(a => a.name).join(', ')}.`);
     const missing = atts.filter(a => a.completion === 'completed' && !resultFor(S, s, a));
-    need(!missing.length, `No row with their Emp ID in the score sheet yet for: ${missing.map(a => `${a.name} (${a.empId})`).join(', ')}. Add them to the sheet, then pull scores again.`);
+    need(!missing.length, `No row with their Emp ID and this attempt in the score sheet yet for: ${missing.map(a => `${a.name} (${a.empId})`).join(', ')}. Add them to the sheet, then pull scores again.`);
     Object.assign(s, {status:'submitted', submittedAt:env.now(), submittedBy:me.id});
     return {};
   };
@@ -340,18 +340,18 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
   function pushLog(S, log) { S.syncLog.push(log); if (S.syncLog.length > 300) S.syncLog.splice(0, S.syncLog.length - 300); }
 
-  /* A score belongs to an attendee by Emp ID. When the sheet has several rows for that Emp ID (other attempts or
-     other KCs), the row with the same attempt is used, and among those the one dated closest to the KC (on or after
-     the KC date first). The sheet's date or attempt is shown when it differs from the booking. */
+  /* A score belongs to an attendee by Emp ID, for the same attempt as the booking (an older attempt's row is never
+     used). Among those rows, the one dated closest to the KC is used (on or after the KC date first); the sheet's
+     date is shown when it differs from the booking. */
   const empKey = v => norm(v).replace(/\s+/g, '');
   function resultFor(S, s, a) {
     const mine = S.results.filter(r => empKey(r.empId) === empKey(a.empId));
-    if (!mine.length) return null;
-    const same = mine.filter(r => r.attempt === s.attempt), pool = same.length ? same : mine;
+    const pool = mine.filter(r => r.attempt === s.attempt);   // a row for another attempt is never used
+    if (!pool.length) return null;
     const gap = r => { const d = (Date.parse(r.date) - Date.parse(s.date)) / DAY; return d >= 0 ? d : 1000 - d; };
     const r = pool.slice().sort((x, y) => gap(x) - gap(y) || y.row - x.row)[0];
     const want = norm(kcName(S, s.assignedKcId || s.requestedKcId));
-    return {...r, dateDiffers:r.date !== s.date, attemptDiffers:r.attempt !== s.attempt, kcMismatch:!!r.kcName && norm(r.kcName) !== want};
+    return {...r, dateDiffers:r.date !== s.date, kcMismatch:!!r.kcName && norm(r.kcName) !== want};
   }
 
   ops.pullScores = async (S, env, me, p) => {
@@ -507,7 +507,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     const today = istDate(now), since = addDays(today, -60);
     const mine = s => me.role !== 'trainer' || s.trainerId === me.id;
     const sessions = S.sessions.filter(s => mine(s) && (s.date >= since || OPEN.includes(s.status))).map(s => ({...s,
-      attendees:S.attendees.filter(a => a.sessionId === s.id).map(a => { const r = ['assigned', 'submitted'].includes(s.status) ? resultFor(S, s, a) : null; return {...a, result:r ? {score:r.score, obtained:r.obtained, passing:r.passing, pass:r.pass, kcName:r.kcName, kcMismatch:r.kcMismatch, date:r.date, attempt:r.attempt, dateDiffers:r.dateDiffers, attemptDiffers:r.attemptDiffers, row:r.row} : null}; })}));
+      attendees:S.attendees.filter(a => a.sessionId === s.id).map(a => { const r = ['assigned', 'submitted'].includes(s.status) ? resultFor(S, s, a) : null; return {...a, result:r ? {score:r.score, obtained:r.obtained, passing:r.passing, pass:r.pass, kcName:r.kcName, kcMismatch:r.kcMismatch, date:r.date, attempt:r.attempt, dateDiffers:r.dateDiffers, row:r.row} : null}; })}));
     const admin = isAdmin(me);
     const st = S.settings;
     return {
