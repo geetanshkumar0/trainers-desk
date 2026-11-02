@@ -86,26 +86,31 @@ function createPickTimer(opts) {
   }
   addKcList();
 
-  /* One-time removals asked for by the team. Each runs once and matches one exact booking, so nothing else is touched. */
+  /* Removals asked for by the team. Each removes one exact booking, once; if two bookings match, neither is touched. */
   const REMOVALS = [
-    // 30 Oct 2026: Abhijeet Patel's test booking (1 PM, Online, attendee NBTS41735, "KC Test" requested).
-    {id: 'abhijeet-test-2026-10-30', trainer: 'abhijeet.patel@nobroker.in', date: '2026-10-30', hour: 13, mode: 'Online', empIds: ['NBTS41735']}
+    // Test bookings, as shown in Pick Timer: date, slot (start hour), mode, KC, trainer's name, number of attendees.
+    {id: 'test-abhijeet-2026-10-30', date: '2026-10-30', hour: 13, mode: 'Online', kc: 'KC Test', trainer: 'Abhijeet Patel', attendees: 1},
+    {id: 'test-geetansh-2026-11-03', date: '2026-11-03', hour: 10, mode: 'Online', kc: 'Knowledge Check - Investment Advisory (Buyer servicing)', trainer: 'Geetansh Kumar', attendees: 1}
   ];
   function runRemovals() {
     S.settings.removalsDone = S.settings.removalsDone || [];
+    const same = (a, b) => String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() === String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const kcIs = (id, name) => same((S.kcs.find(k => k.id === id) || {}).name, name);
     for (const r of REMOVALS) {
       if (S.settings.removalsDone.includes(r.id)) continue;
-      const trainer = S.users.find(u => String(u.email).toLowerCase() === r.trainer);
-      const hits = S.sessions.filter(x => trainer && x.trainerId === trainer.id && x.date === r.date && x.hour === r.hour && x.mode === r.mode
-        && JSON.stringify(S.attendees.filter(a => a.sessionId === x.id).map(a => String(a.empId).trim().toUpperCase()).sort()) === JSON.stringify(r.empIds));
+      const hits = S.sessions.filter(x => x.date === r.date && x.hour === r.hour && x.mode === r.mode
+        && (kcIs(x.requestedKcId, r.kc) || kcIs(x.assignedKcId, r.kc))
+        && same((S.users.find(u => u.id === x.trainerId) || {}).name || (S.settings.formerNames || {})[x.trainerId], r.trainer)
+        && S.attendees.filter(a => a.sessionId === x.id).length === r.attendees);
       if (hits.length === 1) {
         const id = hits[0].id;
         S.sessions = S.sessions.filter(x => x.id !== id);
         S.attendees = S.attendees.filter(a => a.sessionId !== id);
         S.approvals = S.approvals.filter(a => a.sessionId !== id);
-        log(`removed booking ${id} (${r.id})`);
-      } else log(`removal ${r.id}: ${hits.length} matching bookings, nothing removed`);
-      S.settings.removalsDone.push(r.id);
+        S.settings.removalsDone.push(r.id);
+        log(`removed test booking ${id} (${r.id})`);
+      } else if (hits.length > 1) { S.settings.removalsDone.push(r.id); log(`removal ${r.id}: ${hits.length} bookings match, nothing removed`); }
+      // No match yet (for example, not booked on this server): tried again at the next start.
     }
   }
   runRemovals();

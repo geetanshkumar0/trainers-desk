@@ -186,18 +186,28 @@ test('the KC list is added only once, and the test booking removal matches only 
   assert.equal(S.kcs.length, 100);
   // An admin turns one KC off and deletes another; Abhijeet has the test booking and a real one.
   S.kcs.pop(); S.kcs[0].active = false;
-  const ab = { id: 'uab', name: 'Abhijeet Patel', email: 'abhijeet.patel@nobroker.in', role: 'trainer', active: true };
-  S.users.push(ab);
-  const sess = (id, hour, emp) => { S.sessions.push({ id, date: '2026-10-30', hour, mode: 'Online', trainerId: 'uab', status: 'assigned', attempt: 1 }); S.attendees.push({ id: 'a' + id, sessionId: id, empId: emp, name: 'x', email: 'x@nobroker.in' }); };
-  sess('test', 13, 'NBTS41735'); sess('real', 14, 'NBTS41735');
+  // The two test bookings, and real ones next to them that must stay. Abhijeet's account uses another email.
+  S.users.push({ id: 'uab', name: 'Abhijeet Patel', email: 'abhijeet.p@nobroker.in', role: 'trainer', active: true });
+  S.kcs.push({ id: 'ktest', name: 'KC Test', type: 'Objective', active: true });
+  const ia = S.kcs.find(k => k.name === 'Knowledge Check - Investment Advisory (Buyer servicing)').id, owner = S.kcs.find(k => k.name === 'Owner Servicing').id;
+  const geet = S.users.find(u => u.email === 'geetansh.kumar@nobroker.in').id;
+  const sess = (id, date, hour, trainerId, requestedKcId, assignedKcId, n = 1) => {
+    S.sessions.push({ id, date, hour, mode: 'Online', trainerId, requestedKcId, assignedKcId, status: 'submitted', attempt: 1 });
+    for (let i = 0; i < n; i++) S.attendees.push({ id: 'a' + id + i, sessionId: id, empId: 'NBTS4173' + i, name: 'x', email: 'x@nobroker.in' });
+  };
+  sess('testAb', '2026-10-30', 13, 'uab', 'ktest', owner);
+  sess('realAb', '2026-10-30', 14, 'uab', 'ktest', owner);
+  sess('testGe', '2026-11-03', 10, geet, ia, ia);
+  sess('realGe', '2026-11-03', 10, geet, ia, ia, 2);
   S.settings.removalsDone = [];
   pt.close();
   const st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
   pt = mk(); S = pt.state();
-  assert.equal(S.kcs.length, 99, 'a deleted KC is not added back');
+  assert.equal(S.kcs.length, 100, 'a deleted KC is not added back (99 of the list + KC Test)');
   assert.equal(S.kcs[0].active, false);
-  assert.deepEqual(S.sessions.map(s => s.id), ['real']);
-  assert.deepEqual(S.attendees.map(a => a.sessionId), ['real']);
+  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe']);
+  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe']);
+  assert.equal(S.settings.removalsDone.length, 2);
   pt.close(); fs.rmSync(d, { recursive: true, force: true });
 });
 
