@@ -61,9 +61,11 @@
   }
 
   /* ---------- people ---------- */
-  const userName = (S, id) => byId(S.users, id)?.name || 'Former user';
+  const userName = (S, id) => byId(S.users, id)?.name || S.settings.formerNames?.[id] || 'Former user';
   const isAdmin = u => u?.role === 'admin';
-  const isPia = u => u?.role === 'pia' || u?.role === 'admin';
+  const isPia = u => u?.role === 'pia' || u?.role === 'admin';      // 'pia' is the Invigilator role
+  // The Super Admin is an administrator set in server/super-admins.js only; it alone removes users and handles email.
+  const isSuper = u => isAdmin(u) && !!u.superAdmin;
   const kcName = (S, id) => byId(S.kcs, id)?.name || '';
 
   /* ---------- seats ---------- */
@@ -181,7 +183,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   function ownedEditable(S, me, sessionId) {
     const s = byId(S.sessions, sessionId); need(s, 'Booking not found.', 404);
     need(isAdmin(me) || (me.role === 'trainer' && s.trainerId === me.id), 'You can only change your own bookings.', 403);
-    need(['pending', 'booked'].includes(s.status), 'This booking can no longer be changed because PIA has already assigned the KC.', 409);
+    need(['pending', 'booked'].includes(s.status), 'This booking can no longer be changed because an invigilator has already assigned the KC.', 409);
     return s;
   }
   ops.updateBooking = (S, env, me, p) => {
@@ -226,9 +228,9 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     return {};
   };
 
-  /* ---------- PIA: assign and close out ---------- */
+  /* ---------- invigilators: assign and close out ---------- */
   function piaSession(S, me, id, statuses) {
-    need(isPia(me), 'Only the PIA team can do this.', 403);
+    need(isPia(me), 'Only invigilators can do this.', 403);
     const s = byId(S.sessions, id); need(s, 'Session not found.', 404);
     need(statuses.includes(s.status), {booked:'Assign the KC first.', submitted:'This session has already been submitted.', cancelled:'This booking was cancelled.', pending:'This booking is waiting for approval.', rejected:'This booking was rejected.'}[s.status] || 'This session cannot be changed now.', 409);
     return s;
@@ -272,7 +274,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
 
   /* ---------- score sheet ---------- */
   const H = s => norm(s).replace(/[^a-z0-9]/g, '');
-  // PIA's KC Sheet has five columns: Date of KC, Emp ID, Attempt, Obtained Percentage, Status (Pass or Fail).
+  // The KC Sheet has five columns: Date of KC, Emp ID, Attempt, Obtained Percentage, Status (Pass or Fail).
   // The others are read when a sheet has them, but are not needed.
   const SHEET_COLS = {date:'Date of KC', empId:'Emp ID', attempt:'Attempt', obtained:'Obtained Percentage', status:'Status',
     name:'Name', email:'Email ID', kcName:'Sub Team/KC Name', score:'Score', passing:'Passing percentage'};
@@ -359,7 +361,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
 
   ops.pullScores = async (S, env, me, p) => {
-    need(isPia(me), 'Only the PIA team can pull scores.', 403);
+    need(isPia(me), 'Only invigilators can pull scores.', 403);
     const s = p.sessionId ? byId(S.sessions, p.sessionId) : null;
     if (p.sessionId) need(s && ['assigned', 'submitted'].includes(s.status), 'Assign the KC before pulling scores.', 409);
     const data = await env.fetchSheet(S.settings.sheet);
@@ -431,10 +433,23 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     need(!S.users.some(u => u.email === email && u.id !== p.id), 'Another user already has this email.', 409);
     let u = p.id ? byId(S.users, p.id) : null;
     if (p.id) need(u, 'User not found.', 404);
+    if (u?.superAdmin) need(me.id === u.id, 'Only the Super Admin can change the Super Admin.', 403);
+    if (S.settings.removedEmails) S.settings.removedEmails = S.settings.removedEmails.filter(e => e !== email);   // added back
     if (u?.builtin) { need(p.role === 'admin' && p.active !== false && email === u.email, 'This is the built-in administrator set in server/site-admins.js; its email, role and access cannot be changed here.', 400); u.name = name; return {userId:u.id}; }
     if (!u) { u = {id:env.uid('u'), createdAt:env.now()}; S.users.push(u); }
     Object.assign(u, {name, email, role:p.role, active:p.active !== false});
     return {userId:u.id};
+  };
+  /* Super Admin only: remove a user, administrators included. Their past bookings stay, under their name. */
+  ops.removeUser = (S, env, me, p) => {
+    need(isSuper(me), 'Only the Super Admin can remove users.', 403);
+    const u = byId(S.users, p.userId); need(u, 'User not found.', 404);
+    need(u.id !== me.id && !u.superAdmin, 'The Super Admin cannot be removed.', 400);
+    S.users = S.users.filter(x => x.id !== u.id);
+    S.settings.formerNames = {...(S.settings.formerNames || {}), [u.id]:u.name};
+    // A built-in administrator would come back when the server restarts; this keeps them out.
+    S.settings.removedEmails = [...new Set([...(S.settings.removedEmails || []), u.email])];
+    return {removed:u.name};
   };
   ops.saveKc = (S, env, me, p) => {
     need(isAdmin(me), 'Only the administrator can manage the KC list.', 403);
@@ -452,8 +467,9 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     if (p.section === 'general') {
       st.name = str(v.name, 'Site name', 80); st.siteUrl = String(v.siteUrl || '').trim().replace(/\/+$/, '');
       need(!st.siteUrl || /^https?:\/\//.test(st.siteUrl), 'The site address must start with https://');
-      st.piaEmail = String(v.piaEmail || '').trim(); need(!st.piaEmail || emailOk(st.piaEmail), 'Enter a valid PIA team email address.');
+      st.piaEmail = String(v.piaEmail || '').trim(); need(!st.piaEmail || emailOk(st.piaEmail), 'Enter a valid invigilator team email address.');
     } else if (p.section === 'smtp') {
+      need(isSuper(me), 'Only the Super Admin can change email settings.', 403);
       const port = Number(v.port || 587); need(Number.isInteger(port) && port > 0 && port < 65536, 'Enter a valid port.');
       if (v.enabled) { need(String(v.host || '').trim(), 'Enter the mail server.'); need(emailOk(String(v.from || '').replace(/^.*</, '').replace(/>.*$/, '')), 'Enter the From address.'); }
       Object.assign(st.smtp, {enabled:!!v.enabled, host:String(v.host || '').trim(), port, secure:!!v.secure, user:String(v.user || '').trim(), from:String(v.from || '').trim()});
@@ -476,7 +492,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     return {};
   };
   ops.testEmail = async (S, env, me, p) => {
-    need(isAdmin(me), 'Only the administrator can do this.', 403);
+    need(isSuper(me), 'Only the Super Admin can do this.', 403);
     const to = String(p.to || me.email).trim(); need(emailOk(to), 'Enter an address to send the test to.');
     need(S.settings.smtp.host, 'Enter the mail server first.');
     await env.sendTestEmail(S.settings.smtp, to);
@@ -518,11 +534,13 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   };
 
   /* ---------- running an operation ---------- */
-  /* An administrator can switch to another role to use Pick Timer as a PIA or a trainer would. Only the
-     administrator's own role changes, for their own requests; everyone else's access is untouched. */
+  /* An administrator can switch to another role to use Pick Timer as an invigilator or a trainer would (and the
+     Super Admin as a plain administrator too). Only their own role changes, for their own requests. */
   function actingAs(S, meId, asRole) {
     const me = byId(S.users, meId); if (!me) return null;
-    return me.role === 'admin' && ROLES.includes(asRole) && asRole !== 'admin' ? {...me, role:asRole, realRole:'admin'} : me;
+    if (me.role !== 'admin' || !ROLES.includes(asRole)) return me;
+    if (asRole === 'admin') return me.superAdmin ? {...me, superAdmin:false, realRole:'admin', realSuper:true} : me;
+    return {...me, role:asRole, superAdmin:false, realRole:'admin', realSuper:!!me.superAdmin};
   }
   async function run(S, env, meId, name, params, asRole) {
     const me = actingAs(S, meId, asRole); need(me && me.active !== false, 'Please sign in again.', 401);
@@ -540,20 +558,21 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     const admin = isAdmin(me);
     const st = S.settings;
     return {
-      me:{id:me.id, name:me.name, email:me.email, role:me.role, realRole:me.realRole || me.role, builtin:!!me.builtin, mustChangePassword:!!me.mustChangePassword},
+      me:{id:me.id, name:me.name, email:me.email, role:me.role, realRole:me.realRole || me.role, superAdmin:!!me.superAdmin, realSuper:!!(me.realSuper || me.superAdmin), builtin:!!me.builtin, mustChangePassword:!!me.mustChangePassword},
       now, today,
       consts:{HOURS, MODES, CATEGORIES, KC_TYPES, REASONS, ROLES, DEFAULT_CAP, SHEET_COLS},
       seatCap:seatCap(S),
-      users:S.users.map(u => ({id:u.id, name:u.name, role:u.role, active:u.active !== false, ...(admin ? {email:u.email, builtin:!!u.builtin, lastLogin:u.lastLogin || null} : {})})),
+      users:S.users.map(u => ({id:u.id, name:u.name, role:u.role, active:u.active !== false, ...(admin ? {email:u.email, builtin:!!u.builtin, superAdmin:!!u.superAdmin, lastLogin:u.lastLogin || null} : {})})),
+      formerNames:S.settings.formerNames || {},
       kcs:S.kcs,
       sessions,
       approvals:S.approvals.filter(a => admin || byId(S.sessions, a.sessionId)?.trainerId === me.id),
       slots:availability(S, today, 28),
       slotRules:admin ? S.slotRules : [],
       settings:admin ? {name:st.name, siteUrl:st.siteUrl, piaEmail:st.piaEmail, lastSync:st.lastSync,
-        smtp:{...st.smtp, pass:'', hasPass:!!st.smtp.pass}, sso:{...st.sso, clientSecret:'', hasSecret:!!st.sso.clientSecret}, sheet:{sheetId:st.sheet.sheetId || '', tab:st.sheet.tab || '', url:st.sheet.url, hasKey:!!st.sheet.key}}
+        smtp:isSuper(me) ? {...st.smtp, pass:'', hasPass:!!st.smtp.pass} : null, sso:{...st.sso, clientSecret:'', hasSecret:!!st.sso.clientSecret}, sheet:{sheetId:st.sheet.sheetId || '', tab:st.sheet.tab || '', url:st.sheet.url, hasKey:!!st.sheet.key}}
         : {name:st.name, lastSync:isPia(me) ? st.lastSync : null},
-      emailLog:admin ? S.emailLog.slice(-200).reverse().map(m => ({id:m.id, to:m.to, subject:m.subject, status:m.status, at:m.at, error:m.error, text:m.text})) : [],
+      emailLog:isSuper(me) ? S.emailLog.slice(-200).reverse().map(m => ({id:m.id, to:m.to, subject:m.subject, status:m.status, at:m.at, error:m.error, text:m.text})) : [],
       syncLog:isPia(me) ? S.syncLog.slice(-40).reverse() : [],
     };
   }
@@ -607,7 +626,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     S.approvals.push({id:env.uid('ap'), sessionId:ps.id, requestedBy:tr[2].id, status:'pending', at:now - 3600e3, decidedBy:null, decidedAt:null, note:''});
     S.demo = true;
   }
-  /* A stand-in for PIA's Google Sheet, built from the demo sessions (preview and --demo only). */
+  /* A stand-in for the KC score sheet, built from the demo sessions (preview and --demo only). */
   function demoSheet(S, now) {
     const headers = ['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'], rows = [];
     const today = istDate(now);

@@ -42,7 +42,7 @@ test('Sundays, past slots, odd hours and closed slots are refused', async () => 
   await run('admin', 'setSlotRule', {date:'2026-11-02', hour:null, closed:true, note:'Holiday'});
   await rejects(run('t1', 'book', booking({date:'2026-11-02', hour:15})), /closed \(Holiday\)/);
 });
-test('booking emails each attendee, the trainer and the PIA team', async () => {
+test('booking emails each attendee, the trainer and the invigilator team', async () => {
   const {S, run} = world();
   await run('t1', 'book', booking());
   const to = S.emailLog.map(m => m.to).sort();
@@ -73,13 +73,13 @@ test('admin can pre-book for a trainer, including attempt 3 without approval', a
   const r = await run('admin', 'book', booking({trainerId:'t2', attempt:3}));
   assert.equal(r.status, 'booked'); assert.equal(S.sessions[0].trainerId, 't2');
 });
-test('trainers change only their own bookings, and only until PIA assigns', async () => {
+test('trainers change only their own bookings, and only until an invigilator assigns', async () => {
   const {S, run} = world();
   const {sessionId} = await run('t1', 'book', booking());
   await rejects(run('t2', 'cancelBooking', {sessionId}), /your own bookings/);
   await run('t1', 'updateBooking', {...booking({hour:15, attendees:people(4)}), sessionId});
   assert.equal(S.attendees.filter(a => a.sessionId === sessionId).length, 4);
-  await rejects(run('t1', 'assignKc', {sessionId, kcId:'k2'}), /Only the PIA team/);
+  await rejects(run('t1', 'assignKc', {sessionId, kcId:'k2'}), /Only invigilators/);
   await run('pia', 'assignKc', {sessionId, kcId:'k2'});
   const s = S.sessions[0];
   assert.equal(s.assignedKcId, 'k2'); assert.equal(s.invigilatorId, 'pia'); assert.equal(s.status, 'assigned');
@@ -250,4 +250,32 @@ test('the administrator sets the seats for every slot at once', async () => {
   assert.deepEqual(at(15), {Online:10, Offline:10}, 'replaced when asked');
   assert.equal(S.slotRules.length, 0);
   await rejects(run('admin', 'setSeatCap', {cap:0}), /from 1 to 50/);
+});
+
+test('only the Super Admin removes users and sees email settings and the email log', async () => {
+  const {S, run} = world();
+  S.users.push({id:'boss', name:'Boss', email:'boss@nobroker.in', role:'admin', active:true, superAdmin:true});
+  await run('t1', 'book', booking());
+  // An ordinary admin: no email settings, no email log, cannot remove anyone.
+  const a = C.view(S, 'admin', NOW);
+  assert.equal(a.settings.smtp, null); assert.deepEqual(a.emailLog, []);
+  await rejects(run('admin', 'removeUser', {userId:'t2'}), /Only the Super Admin can remove users/);
+  await rejects(run('admin', 'saveSettings', {section:'smtp', values:{}}), /Only the Super Admin/);
+  await rejects(run('admin', 'testEmail', {}), /Only the Super Admin/);
+  await rejects(run('admin', 'saveUser', {id:'boss', name:'X', email:'boss@nobroker.in', role:'trainer'}), /Only the Super Admin can change the Super Admin/);
+  // The Super Admin.
+  const b = C.view(S, 'boss', NOW);
+  assert.equal(b.me.superAdmin, true); assert.ok(b.settings.smtp); assert.ok(b.emailLog.length > 0);
+  await run('boss', 'removeUser', {userId:'admin'});
+  await run('boss', 'removeUser', {userId:'t1'});
+  assert.deepEqual(S.users.map(u => u.id), ['t2', 'pia', 'boss']);
+  assert.equal(C.view(S, 'boss', NOW).sessions[0] && C.view(S, 'boss', NOW).formerNames.t1, 't1', 'past bookings keep the name');
+  await rejects(run('boss', 'removeUser', {userId:'boss'}), /cannot be removed/);
+  // Switched to plain Admin, the Super Admin's extras are off.
+  assert.equal(C.view(S, 'boss', NOW, 'admin').me.superAdmin, false);
+  assert.equal(C.view(S, 'boss', NOW, 'admin').me.realSuper, true);
+  await rejects(C.run(S, {now:() => NOW, uid:p => p}, 'boss', 'removeUser', {userId:'t2'}, 'admin'), /Only the Super Admin/);
+  // Added back later.
+  await run('boss', 'saveUser', {name:'Admin', email:'admin@nobroker.in', role:'admin'});
+  assert.deepEqual(S.settings.removedEmails, ['t1@nobroker.in']);
 });

@@ -200,3 +200,26 @@ test('the KC list is added only once, and the test booking removal matches only 
   assert.deepEqual(S.attendees.map(a => a.sessionId), ['real']);
   pt.close(); fs.rmSync(d, { recursive: true, force: true });
 });
+
+test('geetansh.kumar@nobroker.in is the Super Admin; a removed built-in admin stays out after a restart', async () => {
+  const me = (await as(ADMIN, 'GET', 'api/boot')).data.view.me;
+  assert.deepEqual([me.role, me.superAdmin], ['admin', true]);
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-super-'));
+  process.env.PICK_TIMER_ADMINS = 'other.admin@nobroker.in';
+  try {
+    let pt = createPickTimer({ dataDir: d, demo: false, log: () => {} });
+    const S = pt.state();
+    assert.deepEqual(S.users.filter(u => u.superAdmin).map(u => u.email), ['geetansh.kumar@nobroker.in']);
+    const other = S.users.find(u => u.email === 'other.admin@nobroker.in');
+    assert.ok(other && other.role === 'admin' && !other.superAdmin);
+    const Core = createRequire(import.meta.url)('../pick-timer/public/core.js');
+    const geet = S.users.find(u => u.superAdmin);
+    await Core.run(S, { now: () => Date.now(), uid: p => p + Math.random() }, geet.id, 'removeUser', { userId: other.id });
+    const { Store } = createRequire(import.meta.url)('../pick-timer/server/store.js');
+    pt.close(); const st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
+    pt = createPickTimer({ dataDir: d, demo: false, log: () => {} });
+    assert.equal(pt.state().users.some(u => u.email === 'other.admin@nobroker.in'), false, 'not added back on restart');
+    assert.ok(pt.state().users.some(u => u.superAdmin));
+    pt.close();
+  } finally { delete process.env.PICK_TIMER_ADMINS; fs.rmSync(d, { recursive: true, force: true }); }
+});

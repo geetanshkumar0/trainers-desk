@@ -19,9 +19,9 @@
     async appsScript() { const r = await fetch('apps-script.gs'); return r.ok ? r.text() : ''; },
   };
 
-  // An administrator can switch to the PIA or trainer role (for this browser tab only).
+  // An administrator can switch to the Invigilator or Trainer role (for this browser tab only).
   function viewAs() { try { return sessionStorage.getItem('kc-role') || ''; } catch (e) { return ''; } }
-  function setViewAs(role) { try { if (role && role !== 'admin') sessionStorage.setItem('kc-role', role); else sessionStorage.removeItem('kc-role'); } catch (e) { /* tab-only setting */ } }
+  function setViewAs(role) { try { if (role && role !== 'super') sessionStorage.setItem('kc-role', role); else sessionStorage.removeItem('kc-role'); } catch (e) { /* tab-only setting */ } }
   window.KCRole = viewAs;
 
   let V = null, B = null;            // view from the server; sign-in info when signed out
@@ -29,11 +29,13 @@
 
   /* ---------- helpers ---------- */
   const user = id => V.users.find(u => u.id === id);
-  const uname = id => user(id)?.name || '—';
+  const uname = id => user(id)?.name || V.formerNames?.[id] || '—';
   const kc = id => V.kcs.find(k => k.id === id);
   const kname = id => kc(id)?.name || '—';
   const isAdmin = () => V.me.role === 'admin', isPia = () => V.me.role === 'pia' || V.me.role === 'admin', isTrainer = () => V.me.role === 'trainer';
-  const ROLE = {trainer:'Trainer', pia:'PIA', admin:'Admin'};
+  const ROLE = {trainer:'Trainer', pia:'Invigilator', admin:'Admin', super:'Super Admin'};
+  const roleOf = u => u.superAdmin ? 'Super Admin' : ROLE[u.role];
+  const isSuper = () => !!V.me.superAdmin;
   const STATUS = {pending:'Awaiting approval', booked:'Booked', assigned:'KC assigned', submitted:'Submitted', cancelled:'Cancelled', rejected:'Rejected'};
   const badge = s => `<span class="b ${s}">${STATUS[s] || h(s)}</span>`;
   const modeB = m => `<span class="b ${m.toLowerCase()}">${h(m)}</span>`;
@@ -74,7 +76,7 @@
     const cur = route().parts[0] || '';
     return `<header class="top"><a class="back-td" href="../" title="Back to Trainer Desk">← Trainer Desk</a><a class="brand" href="#/"><span class="logo">${clockIcon()}</span>${h(V.settings.name)}</a>
 <nav class="nav">${navItems().map(([k, l, n]) => `<a href="#/${k}" class="${cur === k || (cur === 'session' && k === 'sessions') ? 'on' : ''}">${h(l)}${n ? `<span class="count">${n}</span>` : ''}</a>`).join('')}</nav>
-<div class="who"><span>${h(V.me.name)}</span>${V.me.realRole === 'admin' ? `<label class="role-switch" title="Switch role to use Pick Timer as a PIA or a trainer would"><span class="sr">Role</span><select data-role-switch>${C.ROLES.slice().reverse().map(r => opt(r, ROLE[r], V.me.role)).join('')}</select></label>` : `<span class="role">${ROLE[V.me.role]}</span>`}<button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
+<div class="who"><span>${h(V.me.name)}</span>${V.me.realRole === 'admin' ? `<label class="role-switch" title="Switch role to use Pick Timer as another role would"><span class="sr">Role</span><select data-role-switch>${[...(V.me.realSuper ? ['super'] : []), ...C.ROLES.slice().reverse()].map(r => opt(r, ROLE[r], V.me.superAdmin ? 'super' : V.me.role)).join('')}</select></label>` : `<span class="role">${roleOf(V.me)}</span>`}<button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
   }
   const clockIcon = () => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>`;
 
@@ -84,8 +86,9 @@
     const views = {book:viewBook, sessions:viewSessions, session:viewSession, calendar:viewCalendar, analytics:viewAnalytics, approvals:viewApprovals, slots:viewSlots, admin:viewAdmin};
     const fn = views[p] && (p !== 'approvals' && p !== 'slots' && p !== 'admin' || isAdmin()) && (p !== 'book' || isTrainer() || isAdmin()) ? views[p] : viewCalendar;
     let body; try { body = fn(r); } catch (e) { console.error(e); body = `<div class="note bad">Something went wrong showing this page: ${h(e.message)}</div>`; }
-    const acting = V.me.realRole === 'admin' && V.me.role !== 'admin'
-      ? `<div class="acting">You are using Pick Timer as ${V.me.role === 'pia' ? 'a PIA' : 'a trainer'}. Anything you do here is real. <button class="btn sm" data-role-back>Back to Admin</button></div>` : '';
+    const home = V.me.realSuper ? 'Super Admin' : 'Admin';
+    const acting = V.me.realRole === 'admin' && (V.me.role !== 'admin' || (V.me.realSuper && !V.me.superAdmin))
+      ? `<div class="acting">You are using Pick Timer as ${V.me.role === 'pia' ? 'an invigilator' : V.me.role === 'trainer' ? 'a trainer' : 'an admin'}. Anything you do here is real. <button class="btn sm" data-role-back>Back to ${home}</button></div>` : '';
     $app.innerHTML = (window.PREVIEW_API ? window.PREVIEW_API.banner(V) : '') + layout(acting + body);
     if (p === 'analytics' && !ui.analytics) loadAnalytics();
     if (p === 'admin' && r.parts[1] === 'sheet' && ui.appsScript == null) API.appsScript().then(t => { ui.appsScript = t || ''; render(); });
@@ -96,7 +99,7 @@
   function signInPage() {
     const banner = window.PREVIEW_API ? window.PREVIEW_API.banner(null) : '';
     return `${banner}<div class="signin"><div class="card"><div class="brand"><span class="logo">${clockIcon()}</span>${h(B?.site || 'Pick Timer')}</div>
-<p class="muted">Knowledge Check scheduling for trainers and the PIA team.</p>
+<p class="muted">Knowledge Check scheduling for trainers and invigilators.</p>
 ${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${h(B?.email || 'Your account')} does not have access to Pick Timer yet. Pick Timer has its own users and roles: ask a Pick Timer administrator to add you under Site administration › Users.</div>`}
 <div class="row" style="margin-top:14px"><a class="btn primary" href="../">Back to Trainer Desk</a><a class="btn ghost" href="../auth/logout">Use a different Google account</a></div></div></div>`;
   }
@@ -145,7 +148,7 @@ ${b.attendees.map((a, i) => `<tr><td class="muted">${i + 1}</td><td><input data-
 <td><input type="email" data-att="${i}" data-k="email" value="${h(a.email)}" placeholder="name@nobroker.in"></td><td><button type="button" class="btn sm ghost danger" data-act="rmAtt" data-i="${i}" ${b.attendees.length < 2 ? 'disabled' : ''}>Remove</button></td></tr>`).join('')}
 </tbody></table></div>
 <div class="row" style="margin-top:10px"><button type="button" class="btn sm" data-act="addAtt" ${b.attendees.length >= V.seatCap ? 'disabled' : ''}>+ Add attendee</button><button type="button" class="btn sm" data-act="pasteAtt">Paste from a sheet</button></div>
-<label class="f" style="margin-top:14px">Note for PIA (optional)<textarea data-draft="note" rows="2">${h(b.note)}</textarea></label>
+<label class="f" style="margin-top:14px">Note for the invigilator (optional)<textarea data-draft="note" rows="2">${h(b.note)}</textarea></label>
 <div class="row" style="margin-top:16px"><button class="btn primary" ${b.hour == null ? 'disabled' : ''}>${editing ? 'Save changes' : pending ? 'Send for approval' : 'Book slot'}</button>${editing ? '' : `<button type="button" class="btn ghost" data-act="resetBook">Clear</button>`}</div></form>`;
   }
 
@@ -231,7 +234,7 @@ ${action}
 <div class="card"><div class="facts">${facts.map(([k, v]) => `<div><b>${k}</b>${h(v)}</div>`).join('')}</div>${s.note ? `<p class="small" style="margin:12px 0 0"><b>Note:</b> ${h(s.note)}</p>` : ''}</div>
 <div class="card flush"><div style="padding:16px 18px 6px" class="row"><h2 style="margin:0;flex:1">Attendees (${s.attendees.length})</h2>
 ${showScores ? `<span class="muted small">${counts.done} completed · ${counts.not} not completed · ${counts.scored} scores found${V.settings.lastSync ? ` · sheet last read ${when(V.settings.lastSync)}` : ''}</span>` : ''}</div>
-${closing ? `<p class="muted small" style="padding:0 18px">Mark each attendee, then pull their scores from the PIA score sheet. Submitting locks the session; anyone not completed needs a new booking.</p>` : ''}
+${closing ? `<p class="muted small" style="padding:0 18px">Mark each attendee, then pull their scores from the score sheet. Submitting locks the session; anyone not completed needs a new booking.</p>` : ''}
 <div class="scroll"><table class="t"><thead><tr><th>Emp ID</th><th>Name</th><th>Email ID</th>${showScores ? '<th>KC completed?</th><th class="num">Obtained</th><th>Status</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
 ${closing ? `<div class="row" style="padding:14px 18px;border-top:1px solid var(--line-2)"><button class="btn" data-act="saveMarks" data-id="${s.id}">Save marks</button><button class="btn" data-act="pull" data-id="${s.id}">Pull scores from sheet</button>
 <span style="flex:1"></span><button class="btn primary" data-act="submitSession" data-id="${s.id}">Submit session</button></div>` : ''}</div>`;
@@ -334,15 +337,17 @@ ${a.detail.slice(0, 500).map(d => `<tr><td class="nowrap">${h(shortDate(d.date))
   /* ---------- site administration (admin) ---------- */
   function viewAdmin(r) {
     const tab = r.parts[1] || 'users';
-    const tabs = [['users', 'Users'], ['kcs', 'KC list'], ['email', 'Email'], ['sheet', 'Score sheet'], ['general', 'General'], ['emaillog', 'Email log'], ['synclog', 'Sync log']];
-    const body = {users:adminUsers, kcs:adminKcs, email:adminEmail, sheet:adminSheet, general:adminGeneral, emaillog:adminEmailLog, synclog:adminSyncLog}[tab] || adminUsers;
+    // Email, Email log and Sync log are for the Super Admin only.
+    const superOnly = ['email', 'emaillog', 'synclog'];
+    const tabs = [['users', 'Users'], ['kcs', 'KC list'], ['email', 'Email'], ['sheet', 'Score sheet'], ['general', 'General'], ['emaillog', 'Email log'], ['synclog', 'Sync log']].filter(([k]) => isSuper() || !superOnly.includes(k));
+    const body = (isSuper() || !superOnly.includes(tab) ? {users:adminUsers, kcs:adminKcs, email:adminEmail, sheet:adminSheet, general:adminGeneral, emaillog:adminEmailLog, synclog:adminSyncLog}[tab] : null) || adminUsers;
     return `<div class="head"><div><h1>Site administration</h1></div></div><div class="tabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${tab === k ? 'on' : ''}">${l}</a>`).join('')}</div>${body(r)}`;
   }
   function adminUsers(r) {
     const editing = r.q.edit ? V.users.find(u => u.id === r.q.edit) : null;
     const list = [...V.users].sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.role.localeCompare(b.role) || a.name.localeCompare(b.name));
     return `<div class="grid2" style="grid-template-columns:2fr 1fr"><div class="card flush scroll"><table class="t"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>
-${list.map(u => `<tr${u.active ? '' : ' style="opacity:.55"'}><td>${h(u.name)}${u.builtin ? ' <span class="b">built-in</span>' : ''}${u.active ? '' : ' <span class="b">inactive</span>'}</td><td class="small">${h(u.email)}</td><td>${ROLE[u.role]}</td><td class="small">${when(u.lastLogin)}</td><td class="right"><a href="#/admin/users?edit=${u.id}">Edit</a></td></tr>`).join('')}</tbody></table></div>
+${list.map(u => `<tr${u.active ? '' : ' style="opacity:.55"'}><td>${h(u.name)}${u.builtin ? ' <span class="b">built-in</span>' : ''}${u.active ? '' : ' <span class="b">inactive</span>'}</td><td class="small">${h(u.email)}</td><td>${roleOf(u)}</td><td class="small">${when(u.lastLogin)}</td><td class="right nowrap">${u.superAdmin && !isSuper() ? '' : `<a href="#/admin/users?edit=${u.id}">Edit</a>`}${isSuper() && !u.superAdmin ? ` · <a href="#" class="danger-link" data-act="removeUser" data-id="${u.id}">Remove</a>` : ''}</td></tr>`).join('')}</tbody></table></div>
 <form class="card" data-form="saveUser" data-id="${editing ? editing.id : ''}"><h2>${editing ? 'Edit user' : 'Add a user'}</h2><div class="form">
 <label class="f">Name<input name="name" value="${h(editing?.name || '')}" required></label><label class="f">Email<input type="email" name="email" value="${h(editing?.email || '')}" ${editing?.builtin ? 'readonly' : ''} required></label>
 <label class="f">Role<select name="role" ${editing?.builtin ? 'disabled' : ''}>${C.ROLES.map(x => opt(x, ROLE[x], editing?.role || 'trainer')).join('')}</select></label>
@@ -375,13 +380,13 @@ ${editing ? `<label class="check"><input type="checkbox" name="active" ${editing
     const s = V.settings;
     return `<form class="card" data-form="settings" data-section="general"><h2>General</h2><div class="form cols">
 <label class="f">Site name<input name="name" value="${h(s.name)}" required></label>
-<label class="f">PIA team email<input type="email" name="piaEmail" value="${h(s.piaEmail)}" placeholder="pia.team@nobroker.in"><span class="muted small">Gets a copy of every booking, change and cancellation.</span></label></div>
+<label class="f">Invigilator team email<input type="email" name="piaEmail" value="${h(s.piaEmail)}" placeholder="pia.team@nobroker.in"><span class="muted small">Gets a copy of every booking, change and cancellation.</span></label></div>
 <div class="row" style="margin-top:14px"><button class="btn primary">Save</button></div></form>`;
   }
   function adminSheet() {
     const s = V.settings.sheet, last = V.syncLog[0];
     return `<form class="card" data-form="settings" data-section="sheet"><h2>Score sheet</h2>
-<p class="muted">Pick Timer reads PIA's score sheet through the Google account Trainer Desk uses for its sheets. It never writes to the sheet. It reads when PIA clicks <b>Pull scores</b> and every 15 minutes.</p>
+<p class="muted">Pick Timer reads the KC score sheet through the Google account Trainer Desk uses for its sheets. It never writes to the sheet. It reads when an invigilator clicks <b>Pull scores</b> and every 15 minutes.</p>
 <div class="form cols"><label class="f">Score sheet link<input name="sheetId" value="${h(s.sheetId ? 'https://docs.google.com/spreadsheets/d/' + s.sheetId + '/edit' : '')}" placeholder="https://docs.google.com/spreadsheets/d/…/edit"></label>
 <label class="f">Tab name<input name="tab" value="${h(s.tab || '')}" placeholder="KC Sheet"></label></div>
 <p class="muted small" style="margin-top:6px">The sheet must be shared (view access is enough) with Trainer Desk's Google account. If it cannot be, use an Apps Script link instead (below).</p>
@@ -392,7 +397,7 @@ ${editing ? `<label class="check"><input type="checkbox" name="active" ${editing
 ${ui.appsScript == null ? '<p class="muted">Loading the script…</p>' : `<pre class="code">${h(ui.appsScript)}</pre><button type="button" class="btn sm" data-act="copyScript">Copy script</button>`}</details>
 <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" data-act="testSheet">Test connection</button><button type="button" class="btn" data-act="syncNow">Sync now</button></div>
 ${ui.sheetTest ? `<div class="note ${ui.sheetTest.missing?.length ? 'warn' : 'good'}" style="margin-top:12px">${ui.sheetTest.error ? h(ui.sheetTest.error) : `Connected to "${h(ui.sheetTest.sheet)}": ${ui.sheetTest.rows} rows. ${ui.sheetTest.missing.length ? `Missing columns: <b>${h(ui.sheetTest.missing.join(', '))}</b>.` : 'All required columns found.'}<br><span class="small">Headers: ${h(ui.sheetTest.headers.join(' · '))}</span>`}</div>` : ''}
-${last ? `<p class="small muted" style="margin-top:12px">Last read ${when(last.at)}: ${last.error ? `<span style="color:var(--bad)">${h(last.error)}</span>` : `${last.rows} rows, ${last.added} new, ${last.updated} updated, ${last.skipped.length} skipped.`} <a href="#/admin/synclog">Sync log</a></p>` : ''}
+${last ? `<p class="small muted" style="margin-top:12px">Last read ${when(last.at)}: ${last.error ? `<span style="color:var(--bad)">${h(last.error)}</span>` : `${last.rows} rows, ${last.added} new, ${last.updated} updated, ${last.skipped.length} skipped.`} ${isSuper() ? '<a href="#/admin/synclog">Sync log</a>' : ''}</p>` : ''}
 <p class="muted small" style="margin-top:12px">Required columns: ${h(['Date of KC', 'Emp ID', 'Attempt', 'Obtained Percentage', 'Status'].join(', '))}. Status must say Pass or Fail. Columns are found by their header names, so order does not matter, but do not rename them. Scores are matched to attendees by Emp ID and Attempt (a row for another attempt is never used); if there are several, the nearest Date of KC is used.</p></form>`;
   }
   function adminEmailLog() {
@@ -425,7 +430,11 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
     openSession(el) { go('#/session/' + el.dataset.id); },
     sessTab(el) { ui.sessFilter.status = el.dataset.k; render(); },
     toggleCancelled(el) { ui.showCancelled = el.checked; render(); },
-    cancelBooking(el) { openModal(`<h2>Cancel this booking?</h2><p class="muted">The seats are freed and the attendees, the trainer and the PIA team are emailed.</p>
+    removeUser(el) { const u = user(el.dataset.id); if (!u) return;
+      openModal(`<h2>Remove ${h(u.name)}?</h2><p class="muted">${h(u.email)} (${h(roleOf(u))}) will no longer be able to open Pick Timer. Their past bookings stay, under their name. You can add them again later.</p>
+<div class="row"><button class="btn danger" data-act="confirmRemoveUser" data-id="${u.id}">Remove</button><button class="btn ghost" data-act="closeModal">Cancel</button></div>`); },
+    async confirmRemoveUser(el) { closeModal(); if (location.hash.includes('edit=')) location.hash = '#/admin/users'; await op('removeUser', {userId:el.dataset.id}, r => `${r.removed} was removed.`); },
+    cancelBooking(el) { openModal(`<h2>Cancel this booking?</h2><p class="muted">The seats are freed and the attendees, the trainer and the invigilator team are emailed.</p>
 <form data-form="cancel" data-id="${el.dataset.id}"><label class="f">Reason (optional)<input name="reason"></label><div class="row" style="margin-top:14px"><button class="btn primary">Cancel booking</button><button type="button" class="btn ghost" data-act="closeModal">Keep it</button></div></form>`); },
     async saveMarks(el) { await op('markAttendees', {sessionId:el.dataset.id, marks:marksList(el.dataset.id)}, 'Marks saved.'); },
     async pull(el) {
@@ -465,7 +474,7 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
       const params = {date:b.date, hour:b.hour, mode:b.mode, requestedKcId:b.requestedKcId, category:b.category, attempt:Number(b.attempt), note:b.note, trainerId:b.trainerId || undefined,
         attendees:b.attendees.filter(a => a.empId || a.name || a.email)};
       if (b.editId) { const r = await op('updateBooking', {...params, sessionId:b.editId}, 'Booking updated. Everyone has been emailed.'); if (r) { ui.book = null; go('#/session/' + r.sessionId); } return; }
-      const r = await op('book', params, x => x.status === 'pending' ? 'Sent to the administrator for approval.' : 'Slot booked. Attendees, you and the PIA team have been emailed.');
+      const r = await op('book', params, x => x.status === 'pending' ? 'Sent to the administrator for approval.' : 'Slot booked. Attendees, you and the invigilator team have been emailed.');
       if (r) { ui.book = null; go('#/session/' + r.sessionId); }
     },
     paste(f, d) {
@@ -519,7 +528,7 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
   }
   function switchRole(role) { setViewAs(role); ui.analytics = null; ui.marks = {}; ui.book = null; if (location.hash) location.hash = ''; boot(); }
   document.addEventListener('change', e => { if (e.target.matches('[data-role-switch]')) switchRole(e.target.value); });
-  document.addEventListener('click', e => { if (e.target.closest('[data-role-back]')) switchRole('admin'); });
+  document.addEventListener('click', e => { if (e.target.closest('[data-role-back]')) switchRole(''); });
   window.KCApp = {boot, render, get view() { return V; }};
   boot();
 })();

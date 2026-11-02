@@ -39,7 +39,8 @@ function createPickTimer(opts) {
     fetchSheet: cfg => cfg.sheetId ? readGoogleSheet(cfg) : (opts.demo && !cfg.url) ? Promise.resolve(Core.demoSheet(S, Date.now())) : fetchSheet(cfg),
     sendTestEmail: (cfg, to) => sendMail(cfg, {to, subject: `Test email from ${S.settings.name}`, body: 'Email from Pick Timer is working.', html: '<p>Email from <b>Pick Timer</b> is working.</p>'})
   };
-  const ADMINS = [...new Set([...require('./site-admins.js'), ...String(process.env.PICK_TIMER_ADMINS || '').split(',')]
+  const SUPER = require('./super-admins.js').map(e => e.toLowerCase());
+  const ADMINS = [...new Set([...SUPER, ...require('./site-admins.js'), ...String(process.env.PICK_TIMER_ADMINS || '').split(',')]
     .map(e => String(e).trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];
   if (fresh) S.settings.name = 'Pick Timer';
   if (fresh && opts.demo) Core.seedDemo(S, env, ADMINS[0]);
@@ -48,7 +49,10 @@ function createPickTimer(opts) {
 
   /* Pick Timer's own built-in admins (their role and access cannot be changed in Pick Timer). */
   function syncAdmins() {
-    const emails = ADMINS;
+    // A built-in admin the Super Admin removed stays removed (the Super Admin cannot be removed).
+    const removed = S.settings.removedEmails || [];
+    const emails = ADMINS.filter(e => SUPER.includes(e) || !removed.includes(e));
+    for (const u of S.users) if (u.superAdmin && !SUPER.includes(u.email)) delete u.superAdmin;
     for (const u of S.users) {
       // Earlier, Trainer Desk admins and trainers were let in automatically. Pick Timer's people are now its own.
       if (u.builtin && !emails.includes(u.email)) { delete u.builtin; u.active = false; }
@@ -58,6 +62,7 @@ function createPickTimer(opts) {
       let u = S.users.find(x => x.email === email);
       if (!u) { u = {id: env.uid('u'), name: email.split('@')[0].split(/[._-]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' '), email, createdAt: Date.now()}; S.users.push(u); }
       Object.assign(u, {role: 'admin', active: true, builtin: true});
+      if (SUPER.includes(email)) u.superAdmin = true;
       delete u.pwhash; delete u.mustChangePassword;
     }
   }
