@@ -25,7 +25,7 @@ test('8 Online and 8 Offline seats per slot, counted separately', async () => {
   await run('t1', 'book', booking({attendees:people(8)}));
   await rejects(run('t2', 'book', booking({attendees:people(1, 50)})), /Online seats in this slot are full/);
   await run('t2', 'book', booking({mode:'Offline', attendees:people(8, 50)}));
-  await rejects(run('t1', 'book', booking({hour:12, attendees:people(9, 80)})), /at most 8/);
+  await rejects(run('t1', 'book', booking({hour:14, attendees:people(9, 80)})), /at most 8/);
 });
 test('a partly full slot says how many seats are left', async () => {
   const {run} = world();
@@ -36,7 +36,7 @@ test('Sundays, past slots, odd hours and closed slots are refused', async () => 
   const {run} = world();
   await rejects(run('t1', 'book', booking({date:'2026-11-01'})), /Sundays are closed/);
   await rejects(run('t1', 'book', booking({date:'2026-10-29'})), /already started/);
-  await rejects(run('t1', 'book', booking({hour:17})), /between 10 AM and 5 PM/);
+  for (const hour of [9, 12, 13, 17]) await rejects(run('t1', 'book', booking({hour})), /Choose one of the slots: 10:30 AM – 11:30 AM, 11:30 AM – 12:30 PM, 2:30 PM – 3:30 PM, 3:30 PM – 4:30 PM, 4:30 PM – 5:30 PM IST/);
   await run('admin', 'setSlotRule', {date:'2026-10-31', hour:11, closed:true, note:'Audit'});
   await rejects(run('t1', 'book', booking()), /closed \(Audit\)/);
   await run('admin', 'setSlotRule', {date:'2026-11-02', hour:null, closed:true, note:'Holiday'});
@@ -64,9 +64,9 @@ test('attempt 3 waits for the administrator and holds no seats until approved', 
   await rejects(run('t1', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only the administrator/);
   await run('t2', 'book', booking({attendees:people(7, 30)}));
   await rejects(run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only 1 Online seat left/);
-  await run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true, hour:12});
+  await run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true, hour:14});
   const s = S.sessions.find(x => x.id === sessionId);
-  assert.equal(s.status, 'booked'); assert.equal(s.hour, 12);
+  assert.equal(s.status, 'booked'); assert.equal(s.hour, 14);
 });
 test('admin can pre-book for a trainer, including attempt 3 without approval', async () => {
   const {S, run} = world();
@@ -77,7 +77,7 @@ test('trainers change only their own bookings, and only until PIA assigns', asyn
   const {S, run} = world();
   const {sessionId} = await run('t1', 'book', booking());
   await rejects(run('t2', 'cancelBooking', {sessionId}), /your own bookings/);
-  await run('t1', 'updateBooking', {...booking({hour:13, attendees:people(4)}), sessionId});
+  await run('t1', 'updateBooking', {...booking({hour:15, attendees:people(4)}), sessionId});
   assert.equal(S.attendees.filter(a => a.sessionId === sessionId).length, 4);
   await rejects(run('t1', 'assignKc', {sessionId, kcId:'k2'}), /Only the PIA team/);
   await run('pia', 'assignKc', {sessionId, kcId:'k2'});
@@ -169,7 +169,7 @@ test('slot capacity cannot drop below seats already booked', async () => {
 });
 test('what each role can see', async () => {
   const {S, run} = world();
-  await run('t1', 'book', booking()); await run('t2', 'book', booking({hour:12, attendees:people(2, 10)}));
+  await run('t1', 'book', booking()); await run('t2', 'book', booking({hour:14, attendees:people(2, 10)}));
   S.settings.smtp.pass = 'app-pass'; S.settings.sso.clientSecret = 'sso-secret'; S.settings.sheet.key = 'k3y';
   assert.equal(C.view(S, 't1', NOW).sessions.length, 1);
   assert.equal(C.view(S, 'pia', NOW).sessions.length, 2);
@@ -206,7 +206,7 @@ test('an administrator can switch to the PIA or trainer role; nobody else can', 
   // As a trainer, the administrator books for themself and sees only their own bookings.
   const {sessionId} = await C.run(S, {now:() => NOW, uid:p => p + Math.random(), fetchSheet:async () => ({}), sendTestEmail:async () => {}}, 'admin', 'book', booking({attendees:people(2)}), 'trainer');
   assert.equal(S.sessions.find(s => s.id === sessionId).trainerId, 'admin');
-  await run('t1', 'book', booking({hour:12, attendees:people(2, 20)}));
+  await run('t1', 'book', booking({hour:14, attendees:people(2, 20)}));
   assert.equal(C.view(S, 'admin', NOW, 'trainer').sessions.length, 1);
   assert.equal(C.view(S, 'admin', NOW).sessions.length, 2);
   // Switched to trainer, admin-only actions are refused.
@@ -227,4 +227,27 @@ test('scores are matched by Emp ID, even when the sheet has another date', async
   const v = C.view(S, 'pia', NOW).sessions[0].attendees.map(a => a.result);
   assert.deepEqual(v.slice(0, 2).map(x => [x.obtained, x.pass, x.dateDiffers]), [[88, true, true], [81, true, false]]);
   assert.equal(v[2], null, 'an older attempt in the sheet is not used for this attempt');
+});
+
+test('five slots a day, each starting at half past', () => {
+  assert.deepEqual(C.HOURS.map(C.slotLabel), ['10:30 AM – 11:30 AM', '11:30 AM – 12:30 PM', '2:30 PM – 3:30 PM', '3:30 PM – 4:30 PM', '4:30 PM – 5:30 PM']);
+  assert.equal(C.slotStart('2026-10-31', 10), Date.parse('2026-10-31T10:30:00+05:30'));
+});
+test('the administrator sets the seats for every slot at once', async () => {
+  const {S, run} = world();
+  await rejects(run('t1', 'setSeatCap', {cap:10}), /Only the administrator/);
+  await run('admin', 'setSlotRule', {date:'2026-10-31', hour:15, capOnline:4, capOffline:12});
+  await run('t1', 'book', booking({attendees:people(6)}));
+  await rejects(run('admin', 'setSeatCap', {cap:5}), /6 Online seats are already booked on Sat 31 Oct 2026, 11:30 AM – 12:30 PM/);
+  await run('admin', 'setSeatCap', {cap:10});
+  const at = h => C.slotInfo(S, '2026-10-31', h).cap;
+  assert.deepEqual(at(11), {Online:10, Offline:10});
+  assert.deepEqual(at(15), {Online:4, Offline:12}, 'a slot given its own seats keeps them');
+  assert.equal(C.view(S, 't1', NOW).seatCap, 10);
+  await run('t1', 'book', booking({hour:14, attendees:people(10, 40)}));
+  await rejects(run('t1', 'book', booking({hour:16, attendees:people(13, 60)})), /at most 12 attendees/);
+  await run('admin', 'setSeatCap', {cap:10, resetCustom:true});
+  assert.deepEqual(at(15), {Online:10, Offline:10}, 'replaced when asked');
+  assert.equal(S.slotRules.length, 0);
+  await rejects(run('admin', 'setSeatCap', {cap:0}), /from 1 to 50/);
 });

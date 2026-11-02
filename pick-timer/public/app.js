@@ -127,7 +127,7 @@ ${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${
       }).join('');
     }).join('');
     const trainers = V.users.filter(u => u.active && (u.role === 'trainer' || u.role === 'admin'));
-    return `<div class="head"><div><h1>${editing ? 'Change booking' : isAdmin() ? 'Pre-book a slot' : 'Book a KC'}</h1><p class="muted">Slots run Monday to Saturday, 10 AM to 5 PM IST. Each slot has ${C.DEFAULT_CAP} Online and ${C.DEFAULT_CAP} Offline seats.</p></div>
+    return `<div class="head"><div><h1>${editing ? 'Change booking' : isAdmin() ? 'Pre-book a slot' : 'Book a KC'}</h1><p class="muted">Slots run Monday to Saturday: ${C.HOURS.map(x => C.slotLabel(x)).join(', ')} IST. Each slot has ${V.seatCap} Online and ${V.seatCap} Offline seats.</p></div>
 ${editing ? `<a class="btn" href="#/session/${b.editId}">Back to booking</a>` : ''}</div>
 <div class="card"><h2>1. Choose a date and slot</h2><div class="days">${days.map(d => { const open = V.slots.some(s => s.date === d && !s.closed && C.slotStart(d, s.hour) > Date.now()); const x = C.dateLabel(d).split(' ');
   return `<button class="day${b.date === d ? ' on' : ''}" data-act="pickDay" data-date="${d}" ${open ? '' : 'disabled'}><span>${x[0]}</span><b>${x[1]}</b><span>${x[2]}</span></button>`; }).join('')}</div>
@@ -139,28 +139,30 @@ ${b.hour != null ? `<div class="note info"><b>${h(C.dateLabel(b.date))}</b>, ${C
 <label class="f">Category<select data-draft="category">${C.CATEGORIES.map(c => opt(c, c, b.category)).join('')}</select></label>
 <label class="f">Attempt<select data-draft="attempt" data-rerender="1" ${editing ? 'disabled' : ''}>${[1, 2, 3].map(n => opt(n, `Attempt ${n}`, b.attempt)).join('')}</select></label></div>
 ${pending ? `<div class="note warn" style="margin-top:12px">Attempt 3 needs the administrator's approval. Your request will hold no seats until it is approved.</div>` : ''}
-<h3 style="margin-top:18px">Attendees <span class="muted small">(${b.attendees.length} of ${C.DEFAULT_CAP})</span></h3>
+<h3 style="margin-top:18px">Attendees <span class="muted small">(${b.attendees.length} of ${V.seatCap})</span></h3>
 <div class="scroll"><table class="t"><thead><tr><th>#</th><th>Emp ID</th><th>Name</th><th>Email ID</th><th></th></tr></thead><tbody>
 ${b.attendees.map((a, i) => `<tr><td class="muted">${i + 1}</td><td><input data-att="${i}" data-k="empId" value="${h(a.empId)}" placeholder="NB12345"></td><td><input data-att="${i}" data-k="name" value="${h(a.name)}"></td>
 <td><input type="email" data-att="${i}" data-k="email" value="${h(a.email)}" placeholder="name@nobroker.in"></td><td><button type="button" class="btn sm ghost danger" data-act="rmAtt" data-i="${i}" ${b.attendees.length < 2 ? 'disabled' : ''}>Remove</button></td></tr>`).join('')}
 </tbody></table></div>
-<div class="row" style="margin-top:10px"><button type="button" class="btn sm" data-act="addAtt" ${b.attendees.length >= C.DEFAULT_CAP ? 'disabled' : ''}>+ Add attendee</button><button type="button" class="btn sm" data-act="pasteAtt">Paste from a sheet</button></div>
+<div class="row" style="margin-top:10px"><button type="button" class="btn sm" data-act="addAtt" ${b.attendees.length >= V.seatCap ? 'disabled' : ''}>+ Add attendee</button><button type="button" class="btn sm" data-act="pasteAtt">Paste from a sheet</button></div>
 <label class="f" style="margin-top:14px">Note for PIA (optional)<textarea data-draft="note" rows="2">${h(b.note)}</textarea></label>
 <div class="row" style="margin-top:16px"><button class="btn primary" ${b.hour == null ? 'disabled' : ''}>${editing ? 'Save changes' : pending ? 'Send for approval' : 'Book slot'}</button>${editing ? '' : `<button type="button" class="btn ghost" data-act="resetBook">Clear</button>`}</div></form>`;
   }
 
   /* ---------- calendar ---------- */
   function slotView(date, hour) {
-    if (isAdmin()) { const atts = V.sessions.flatMap(s => s.attendees.map(a => ({...a, sessionId:s.id}))); return C.slotInfo({slotRules:V.slotRules, sessions:V.sessions, attendees:atts}, date, hour); }
+    if (isAdmin()) { const atts = V.sessions.flatMap(s => s.attendees.map(a => ({...a, sessionId:s.id}))); return C.slotInfo({slotRules:V.slotRules, sessions:V.sessions, attendees:atts, settings:{seatCap:V.seatCap}}, date, hour); }
     return V.slots.find(s => s.date === date && s.hour === hour);
   }
   function viewCalendar(r) {
     const wk = mondayOf(r.q.week || V.today), days = [0, 1, 2, 3, 4, 5].map(i => C.addDays(wk, i));
     const cells = [`<div class="ch"></div>`, ...days.map(d => `<div class="ch${d === V.today ? ' today' : ''}">${shortDate(d)}</div>`)];
-    for (const hr of C.HOURS) {
+    // Bookings made before the slot times changed can sit at an hour that is no longer a slot; they still get a row.
+    const hours = [...new Set([...C.HOURS, ...V.sessions.filter(s => days.includes(s.date)).map(s => s.hour)])].sort((a, b) => a - b);
+    for (const hr of hours) {
       cells.push(`<div class="hr">${C.hourLabel(hr)}</div>`);
       for (const d of days) {
-        const info = slotView(d, hr), past = C.slotStart(d, hr) + 3600e3 < Date.now();
+        const info = C.HOURS.includes(hr) ? slotView(d, hr) : {closed:true, reason:'Not a slot now'}, past = C.slotStart(d, hr) + 3600e3 < Date.now();
         const list = V.sessions.filter(s => s.date === d && s.hour === hr && (s.status !== 'cancelled' || ui.showCancelled));
         const seats = info && !info.closed && !past ? `<div class="seats">${C.MODES.map(m => { const left = info.cap[m] - info.used[m]; return `<span class="${left <= 0 ? 'full' : m === 'Online' ? 'on' : 'off'}" title="${m} seats left">${m === 'Online' ? 'On' : 'Off'} ${left}/${info.cap[m]}</span>`; }).join('')}</div>` : '';
         cells.push(`<div class="${info?.closed ? 'closed' : past ? 'past' : ''}">${info?.closed ? `<div class="muted small">${h(info.reason)}</div>` : seats}
@@ -270,13 +272,17 @@ ${rule && !info.closed && (rule.capOnline != null || rule.capOffline != null) ? 
     let panel = '';
     if (ed) { const info = slotView(ed.date, ed.hour), rule = V.slotRules.find(x => x.date === ed.date && x.hour === ed.hour);
       panel = `<form class="card" data-form="slotRule" data-date="${ed.date}" data-hour="${ed.hour}"><h2>${h(C.dateLabel(ed.date))}, ${C.slotLabel(ed.hour)}</h2>
-<div class="form cols"><label class="f">Online seats<input type="number" min="0" max="50" name="capOnline" value="${rule?.capOnline ?? C.DEFAULT_CAP}"><span class="muted small">${info.used.Online} booked</span></label>
-<label class="f">Offline seats<input type="number" min="0" max="50" name="capOffline" value="${rule?.capOffline ?? C.DEFAULT_CAP}"><span class="muted small">${info.used.Offline} booked</span></label>
+<div class="form cols"><label class="f">Online seats<input type="number" min="0" max="50" name="capOnline" value="${rule?.capOnline ?? V.seatCap}"><span class="muted small">${info.used.Online} booked</span></label>
+<label class="f">Offline seats<input type="number" min="0" max="50" name="capOffline" value="${rule?.capOffline ?? V.seatCap}"><span class="muted small">${info.used.Offline} booked</span></label>
 <label class="f">Reason if closed<input name="note" value="${h(rule?.note || '')}" placeholder="e.g. Training audit"></label></div>
 <label class="check" style="margin-top:12px"><input type="checkbox" name="closed" ${rule?.closed ? 'checked' : ''}> Close this slot</label>
 <div class="row" style="margin-top:14px"><button class="btn primary">Save slot</button><button type="button" class="btn ghost" data-act="closeSlotEdit">Close</button><a class="btn" href="#/book">Pre-book this week</a></div></form>`; }
     return `<div class="head"><div><h1>Slots</h1><p class="muted">Click a slot to change its seats or close it. Closing doesn't cancel existing bookings. Sundays are always closed.</p></div>
 <div class="row"><a class="btn" href="#/slots?week=${C.addDays(wk, -7)}">‹ Previous</a><a class="btn" href="#/slots">This week</a><a class="btn" href="#/slots?week=${C.addDays(wk, 7)}">Next ›</a></div></div>
+<form class="card seatcap" data-form="seatCap"><div class="row" style="align-items:flex-end">
+<label class="f" style="max-width:220px">Seats per slot, for every slot<input type="number" name="cap" min="1" max="50" value="${V.seatCap}" required><span class="muted small">Online and Offline each. Now ${V.seatCap}.</span></label>
+<label class="check" style="margin-bottom:10px"><input type="checkbox" name="resetCustom" ${V.slotRules.some(x => x.date >= V.today && (x.capOnline != null || x.capOffline != null)) ? '' : 'disabled'}> Also replace seat numbers set for individual slots (${V.slotRules.filter(x => x.date >= V.today && (x.capOnline != null || x.capOffline != null)).length} from today on)</label>
+<button class="btn primary" style="margin-bottom:6px">Apply to all slots</button></div></form>
 ${panel}<div class="scroll"><div class="cal">${cells.join('')}</div></div>`;
   }
 
@@ -413,7 +419,7 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
     addAtt() { ui.book.attendees.push({empId:'', name:'', email:''}); render(); },
     rmAtt(el) { ui.book.attendees.splice(Number(el.dataset.i), 1); render(); },
     resetBook() { ui.book = freshBook(); render(); },
-    pasteAtt() { openModal(`<h2>Paste attendees</h2><p class="muted small">Copy the rows from your sheet (Emp ID, Name, Email ID, in that order) and paste them here. Up to ${C.DEFAULT_CAP} rows.</p>
+    pasteAtt() { openModal(`<h2>Paste attendees</h2><p class="muted small">Copy the rows from your sheet (Emp ID, Name, Email ID, in that order) and paste them here. Up to ${V.seatCap} rows.</p>
 <form data-form="paste"><textarea name="text" rows="8" style="width:100%" placeholder="NB41210&#9;Aditi Rao&#9;aditi.rao@nobroker.in"></textarea><div class="row" style="margin-top:12px"><button class="btn primary">Add these</button><button type="button" class="btn ghost" data-act="closeModal">Cancel</button></div></form>`); },
     closeModal,
     openSession(el) { go('#/session/' + el.dataset.id); },
@@ -467,13 +473,14 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
         .filter(r => !/emp\s*id/i.test(r[0] || '')).map(r => ({empId:r[0] || '', name:r[1] || '', email:r[2] || ''}));
       if (!rows.length) return toast('Nothing to add.', true);
       const kept = ui.book.attendees.filter(a => a.empId || a.name || a.email);
-      ui.book.attendees = [...kept, ...rows].slice(0, C.DEFAULT_CAP);
-      if (kept.length + rows.length > C.DEFAULT_CAP) toast(`Only ${C.DEFAULT_CAP} attendees fit in one booking; the rest were left out.`, true);
+      ui.book.attendees = [...kept, ...rows].slice(0, V.seatCap);
+      if (kept.length + rows.length > V.seatCap) toast(`Only ${V.seatCap} attendees fit in one booking; the rest were left out.`, true);
       closeModal(); render();
     },
     async cancel(f, d) { closeModal(); await op('cancelBooking', {sessionId:f.dataset.id, reason:d.reason}, 'Booking cancelled. Everyone has been emailed.'); },
     async assign(f, d) { await op('assignKc', {sessionId:f.dataset.id, kcId:d.kcId}, 'KC assigned. You are recorded as the invigilator.'); },
     async decide(f, d, submitter) { await op('decideApproval', {approvalId:f.dataset.id, approve:submitter?.value === '1', date:d.date, hour:Number(d.hour), mode:d.mode, note:d.note}, submitter?.value === '1' ? 'Approved and booked.' : 'Request rejected.'); },
+    async seatCap(f, d) { await op('setSeatCap', {cap:Number(d.cap), resetCustom:!!d.resetCustom}, `Every slot now has ${d.cap} Online and ${d.cap} Offline seats.`); },
     async slotRule(f, d) { if (await op('setSlotRule', {date:f.dataset.date, hour:Number(f.dataset.hour), closed:d.closed, note:d.note, capOnline:d.capOnline, capOffline:d.capOffline}, 'Slot saved.') !== null) { ui.slotEdit = null; render(); } },
     async saveUser(f, d) { const r = await op('saveUser', {id:f.dataset.id || undefined, name:d.name, email:d.email, role:d.role || 'admin', active:d.active === undefined ? true : d.active}, f.dataset.id ? 'User saved.' : 'User added.'); if (r) go('#/admin/users'); },
     async saveKc(f, d) { const r = await op('saveKc', {id:f.dataset.id || undefined, name:d.name, type:d.type, active:d.active === undefined ? true : d.active}, f.dataset.id ? 'KC saved.' : 'KC added.'); if (r) go('#/admin/kcs'); },

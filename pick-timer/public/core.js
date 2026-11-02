@@ -10,8 +10,10 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const HOURS = [10, 11, 12, 13, 14, 15, 16];          // slot start hours, IST
-  const DEFAULT_CAP = 8;                               // seats per mode per slot
+  // Five one-hour slots a day, starting at half past: 10:30, 11:30, 2:30, 3:30 and 4:30 PM IST.
+  // A slot is stored by its start hour (10 means 10:30–11:30).
+  const HOURS = [10, 11, 14, 15, 16];
+  const DEFAULT_CAP = 8;                               // seats per mode per slot, until the administrator changes it
   const MODES = ['Online', 'Offline'];
   const CATEGORIES = ['New Hire', 'Lateral'];
   const KC_TYPES = ['Objective', 'Subjective'];
@@ -31,9 +33,11 @@
   const addDays = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
   const weekday = date => new Date(date + 'T00:00:00Z').getUTCDay(); // 0 = Sunday
   const validDate = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d)) && !isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
-  const slotStart = (date, hour) => Date.parse(`${date}T${pad(hour)}:00:00+05:30`);
-  const hourLabel = h => (h % 12 || 12) + (h < 12 ? ' AM' : ' PM');
+  const slotStart = (date, hour) => Date.parse(`${date}T${pad(hour)}:30:00+05:30`);
+  const hourLabel = h => `${h % 12 || 12}:30 ${h < 12 ? 'AM' : 'PM'}`;   // the slot's start time
   const slotLabel = h => `${hourLabel(h)} – ${hourLabel(h + 1)}`;
+  const SLOT_LIST = HOURS.map(h => slotLabel(h)).join(', ');
+  const seatCap = S => S.settings.seatCap ?? DEFAULT_CAP;               // seats per mode in every slot
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dateLabel = d => `${DOW[weekday(d)]} ${Number(d.slice(8))} ${MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
@@ -68,7 +72,7 @@
     const rule = S.slotRules.find(r => r.date === date && r.hour === hour);
     const sunday = weekday(date) === 0;
     const closed = sunday || !!dayRule?.closed || !!rule?.closed;
-    const cap = {Online:rule?.capOnline ?? DEFAULT_CAP, Offline:rule?.capOffline ?? DEFAULT_CAP};
+    const cap = {Online:rule?.capOnline ?? seatCap(S), Offline:rule?.capOffline ?? seatCap(S)};
     const used = {Online:0, Offline:0};
     for (const s of S.sessions) if (s.date === date && s.hour === hour && SEATED.includes(s.status)) used[s.mode] += S.attendees.filter(a => a.sessionId === s.id).length;
     return {date, hour, closed, reason:sunday ? 'Sunday' : dayRule?.closed ? (dayRule.note || 'Closed') : rule?.closed ? (rule.note || 'Closed') : '', cap, used};
@@ -111,9 +115,9 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
 
   /* ---------- booking ---------- */
-  function cleanAttendees(list) {
+  function cleanAttendees(list, max) {
     need(Array.isArray(list) && list.length, 'Add at least one attendee.');
-    need(list.length <= DEFAULT_CAP, `A booking can have at most ${DEFAULT_CAP} attendees.`);
+    need(list.length <= max, `A booking can have at most ${max} attendees.`);
     const seen = new Set();
     return list.map((a, i) => {
       const n = i + 1;
@@ -125,7 +129,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
   function checkSlot(S, env, date, hour, mode, seats, excludeId, isAdminUser) {
     need(validDate(date), 'Choose a valid date.');
-    need(HOURS.includes(hour), 'Choose a slot between 10 AM and 5 PM.');
+    need(HOURS.includes(hour), `Choose one of the slots: ${SLOT_LIST} IST.`);
     need(MODES.includes(mode), 'Choose Online or Offline.');
     need(weekday(date) !== 0, 'Sundays are closed.');
     need(slotStart(date, hour) > env.now(), 'That slot has already started. Choose a later slot.');
@@ -147,7 +151,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   function readBooking(S, p) {
     const kc = byId(S.kcs, p.requestedKcId); need(kc && kc.active !== false, 'Choose the KC.');
     need(CATEGORIES.includes(p.category), 'Choose the category (New Hire or Lateral).');
-    return {date:String(p.date || ''), hour:Number(p.hour), mode:p.mode, requestedKcId:kc.id, category:p.category, attendees:cleanAttendees(p.attendees)};
+    return {date:String(p.date || ''), hour:Number(p.hour), mode:p.mode, requestedKcId:kc.id, category:p.category, attendees:cleanAttendees(p.attendees, Math.max(seatCap(S), ...S.slotRules.flatMap(r => [r.capOnline || 0, r.capOffline || 0])))};
   }
 
   const ops = {};
@@ -389,10 +393,34 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
         if (p[key] == null || p[key] === '') { delete r[key]; continue; }
         const c = Number(p[key]); need(Number.isInteger(c) && c >= 0 && c <= 50, `${m} capacity must be a whole number from 0 to 50.`);
         need(c >= info.used[m], `${info.used[m]} ${m} seats are already booked in this slot, so capacity can't go below ${info.used[m]}.`, 409);
-        r[key] = c === DEFAULT_CAP ? undefined : c; if (r[key] === undefined) delete r[key];
+        r[key] = c === seatCap(S) ? undefined : c; if (r[key] === undefined) delete r[key];
       }
     }
     if (!r.closed && r.capOnline == null && r.capOffline == null) S.slotRules = S.slotRules.filter(x => x !== r);
+    return {};
+  };
+  /* Seats per mode for every slot at once. Slots given their own number keep it, unless `resetCustom` is set. */
+  ops.setSeatCap = (S, env, me, p) => {
+    need(isAdmin(me), 'Only the administrator can change slots.', 403);
+    const cap = Number(p.cap); need(Number.isInteger(cap) && cap >= 1 && cap <= 50, 'Seats per slot must be a whole number from 1 to 50.');
+    const reset = !!p.resetCustom, now = env.now();
+    // Slots still ahead with bookings must keep room for the people already booked.
+    const ahead = new Map();
+    for (const s of S.sessions) if (SEATED.includes(s.status) && slotStart(s.date, s.hour) > now) ahead.set(`${s.date}|${s.hour}`, [s.date, s.hour]);
+    for (const [date, hour] of ahead.values()) {
+      const info = slotInfo(S, date, hour), rule = S.slotRules.find(r => r.date === date && r.hour === hour);
+      for (const m of MODES) {
+        const own = rule?.[m === 'Online' ? 'capOnline' : 'capOffline'];
+        const next = own != null && !reset ? own : cap;
+        need(info.used[m] <= next, `${info.used[m]} ${m} seats are already booked on ${dateLabel(date)}, ${slotLabel(hour)}, so seats per slot can't go below ${info.used[m]}.`, 409);
+      }
+    }
+    S.settings.seatCap = cap;
+    if (reset) {
+      const today = istDate(now);
+      for (const r of S.slotRules) if (r.date >= today) { delete r.capOnline; delete r.capOffline; }
+    } else for (const r of S.slotRules) for (const k of ['capOnline', 'capOffline']) if (r[k] === cap) delete r[k];
+    S.slotRules = S.slotRules.filter(r => r.closed || r.capOnline != null || r.capOffline != null);
     return {};
   };
   ops.saveUser = (S, env, me, p) => {
@@ -515,6 +543,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       me:{id:me.id, name:me.name, email:me.email, role:me.role, realRole:me.realRole || me.role, builtin:!!me.builtin, mustChangePassword:!!me.mustChangePassword},
       now, today,
       consts:{HOURS, MODES, CATEGORIES, KC_TYPES, REASONS, ROLES, DEFAULT_CAP, SHEET_COLS},
+      seatCap:seatCap(S),
       users:S.users.map(u => ({id:u.id, name:u.name, role:u.role, active:u.active !== false, ...(admin ? {email:u.email, builtin:!!u.builtin, lastLogin:u.lastLogin || null} : {})})),
       kcs:S.kcs,
       sessions,
@@ -555,7 +584,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     let d = today, made = 0;
     while (made < 8) {
       d = addDays(d, -1); if (weekday(d) === 0) continue; made++;
-      [[10, 'Online'], [12, 'Offline'], [15, 'Online']].forEach(([h, mode], j) => {
+      [[10, 'Online'], [11, 'Offline'], [15, 'Online']].forEach(([h, mode], j) => {
         if ((hash(d + h) % 5) === 0) return;
         const kc = kcs[hash(d + 'kc' + h) % kcs.length], t = tr[hash(d + 't' + h) % tr.length], inv = pia[hash(d + 'p' + h) % pia.length];
         const s = mk(d, h, mode, t, kc, hash(d + 'c' + h) % 4 ? 'New Hire' : 'Lateral', hash(d + 'at' + h) % 6 ? 1 : 2, 4 + hash(d + 'n' + h) % 5, 'submitted', inv);
@@ -571,7 +600,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     // upcoming bookings
     let nd = today, n = 0;
     while (n < 4) { nd = addDays(nd, 1); if (weekday(nd) === 0) continue; n++;
-      mk(nd, 10 + (n * 2) % 7, n % 2 ? 'Online' : 'Offline', tr[n % 3], kcs[n % kcs.length], 'New Hire', 1, 3 + n, 'booked', null); }
+      mk(nd, HOURS[(n * 2) % HOURS.length], n % 2 ? 'Online' : 'Offline', tr[n % 3], kcs[n % kcs.length], 'New Hire', 1, 3 + n, 'booked', null); }
     // an attempt-3 request waiting for approval
     let ad = addDays(today, 2); if (weekday(ad) === 0) ad = addDays(ad, 1);
     const ps = mk(ad, 14, 'Online', tr[2], kcs[2], 'New Hire', 3, 2, 'pending', null);
