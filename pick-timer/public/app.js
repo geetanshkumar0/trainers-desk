@@ -72,10 +72,22 @@
     if (isAdmin()) items.splice(2, 0, ['book', 'Pre-book'], ['approvals', 'Approvals', pend], ['slots', 'Slots']), items.push(['admin', 'Site administration']);
     return items;
   }
+  // The first four menu items sit in the header; the rest open from the "More" arrow.
+  const NAV_SHOWN = 4;
+  function navLinks(cur) {
+    const items = navItems(), on = k => cur === k || (cur === 'session' && k === 'sessions');
+    const link = ([k, l, n], cls = '') => `<a href="#/${k}" class="${[cls, on(k) ? 'on' : ''].join(' ').trim()}">${h(l)}${n ? `<span class="count">${n}</span>` : ''}</a>`;
+    const shown = items.slice(0, NAV_SHOWN), rest = items.slice(NAV_SHOWN);
+    if (!rest.length) return shown.map(x => link(x)).join('');
+    const restOn = rest.find(([k]) => on(k)), restCount = rest.reduce((t, x) => t + (x[2] || 0), 0);
+    return shown.map(x => link(x)).join('') + `<div class="more${ui.navMore ? ' open' : ''}">
+<button type="button" class="more-btn${restOn ? ' on' : ''}" data-nav-more aria-haspopup="true" aria-expanded="${ui.navMore ? 'true' : 'false'}">${restOn ? h(restOn[1]) : 'More'}${restCount ? `<span class="count">${restCount}</span>` : ''}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+<div class="more-menu" role="menu">${rest.map(x => link(x, 'item')).join('')}</div></div>`;
+  }
   function layout(body) {
     const cur = route().parts[0] || '';
     return `<header class="top"><a class="back-td" href="../" title="Back to Trainer Desk">← Trainer Desk</a><a class="brand" href="#/"><span class="logo">${clockIcon()}</span>${h(V.settings.name)}</a>
-<nav class="nav">${navItems().map(([k, l, n]) => `<a href="#/${k}" class="${cur === k || (cur === 'session' && k === 'sessions') ? 'on' : ''}">${h(l)}${n ? `<span class="count">${n}</span>` : ''}</a>`).join('')}</nav>
+<nav class="nav">${navLinks(cur)}</nav>
 <div class="who"><span>${h(V.me.name)}</span>${V.me.realRole === 'admin' ? `<label class="role-switch" title="Switch role to use Pick Timer as another role would"><span class="sr">Role</span><select data-role-switch>${[...(V.me.realSuper ? ['super'] : []), ...C.ROLES.slice().reverse()].map(r => opt(r, ROLE[r], V.me.superAdmin ? 'super' : V.me.role)).join('')}</select></label>` : `<span class="role">${roleOf(V.me)}</span>`}<button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
   }
   const clockIcon = () => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>`;
@@ -529,6 +541,13 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
   function switchRole(role) { setViewAs(role); ui.analytics = null; ui.marks = {}; ui.book = null; if (location.hash) location.hash = ''; boot(); }
   document.addEventListener('change', e => { if (e.target.matches('[data-role-switch]')) switchRole(e.target.value); });
   document.addEventListener('click', e => { if (e.target.closest('[data-role-back]')) switchRole(''); });
+  // The "More" menu: the arrow opens and closes it; a click elsewhere, a choice or Escape closes it.
+  document.addEventListener('click', e => {
+    if (e.target.closest('[data-nav-more]')) { ui.navMore = !ui.navMore; render(); return; }
+    if (ui.navMore && (!e.target.closest('.more-menu') || e.target.closest('a'))) { ui.navMore = false; if (e.target.closest('a')) setTimeout(render, 0); else render(); }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.navMore) { ui.navMore = false; render(); } });
+  window.addEventListener('hashchange', () => { ui.navMore = false; });
   window.KCApp = {boot, render, get view() { return V; }};
   boot();
 })();
