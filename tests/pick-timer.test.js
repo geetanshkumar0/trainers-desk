@@ -191,23 +191,27 @@ test('the KC list is added only once, and the test booking removal matches only 
   S.kcs.push({ id: 'ktest', name: 'KC Test', type: 'Objective', active: true });
   const ia = S.kcs.find(k => k.name === 'Knowledge Check - Investment Advisory (Buyer servicing)').id, owner = S.kcs.find(k => k.name === 'Owner Servicing').id;
   const geet = S.users.find(u => u.email === 'geetansh.kumar@nobroker.in').id;
-  const sess = (id, date, hour, trainerId, requestedKcId, assignedKcId, n = 1) => {
-    S.sessions.push({ id, date, hour, mode: 'Online', trainerId, requestedKcId, assignedKcId, status: 'submitted', attempt: 1 });
+  const sess = (id, date, hour, trainerId, requestedKcId, assignedKcId, n = 1, status = 'submitted') => {
+    S.sessions.push({ id, date, hour, mode: 'Online', trainerId, requestedKcId, assignedKcId, status, attempt: 1 });
     for (let i = 0; i < n; i++) S.attendees.push({ id: 'a' + id + i, sessionId: id, empId: 'NBTS4173' + i, name: 'x', email: 'x@nobroker.in' });
   };
   sess('testAb', '2026-10-30', 13, 'uab', 'ktest', owner);
   sess('realAb', '2026-10-30', 14, 'uab', 'ktest', owner);
   sess('testGe', '2026-11-03', 10, geet, ia, ia);
   sess('realGe', '2026-11-03', 10, geet, ia, ia, 2);
+  S.kcs.push({ id: 'kosup', name: 'Owner Super Servicing', type: 'Objective', active: true });
+  sess('demo1', '2026-11-10', 14, geet, 'kosup', 'kosup');
+  sess('demo2', '2026-11-11', 10, geet, 'kosup', 'kosup');
+  sess('realOs', '2026-11-12', 10, geet, 'kosup', 'kosup', 1, 'assigned');   // not submitted: stays
   S.settings.removalsDone = [];
   pt.close();
   const st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
   pt = mk(); S = pt.state();
-  assert.equal(S.kcs.length, 100, 'a deleted KC is not added back (99 of the list + KC Test)');
+  assert.equal(S.kcs.length, 101, 'a deleted KC is not added back (99 of the list + KC Test + Owner Super Servicing)');
   assert.equal(S.kcs[0].active, false);
-  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe']);
-  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe']);
-  assert.equal(S.settings.removalsDone.length, 2);
+  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe', 'realOs']);
+  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs']);
+  assert.equal(S.settings.removalsDone.length, 3);
   pt.close(); fs.rmSync(d, { recursive: true, force: true });
 });
 
