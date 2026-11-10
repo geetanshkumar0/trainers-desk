@@ -233,3 +233,30 @@ test('geetansh.kumar@nobroker.in is the Super Admin; a removed built-in admin st
     pt.close();
   } finally { delete process.env.PICK_TIMER_ADMINS; fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+test('the trainers in user-list.js are added once; people already in Pick Timer are left as they are', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-users-'));
+  const { Store } = createRequire(import.meta.url)('../pick-timer/server/store.js');
+  const mk = () => createPickTimer({ dataDir: d, demo: false, log: () => {} });
+  try {
+    let pt = mk(); let S = pt.state();
+    let trainers = S.users.filter(u => u.role === 'trainer');
+    assert.equal(trainers.length, 15);
+    const amzad = trainers.find(u => u.email === 'amzad.bf@nobroker.in');
+    assert.deepEqual([amzad.name, amzad.active], ['BILLUR FAKRUDDIN SAB AMZAD', true]);
+    // Someone already in Pick Timer with another role or name keeps it, even if the list is read again.
+    const sagar = S.users.find(u => u.email === 'sagar.khare@nobroker.in');
+    Object.assign(sagar, { name: 'Sagar K', role: 'pia' });
+    delete S.settings.userListVersion;
+    pt.close(); let st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
+    pt = mk(); S = pt.state();
+    assert.deepEqual(S.users.filter(u => u.email === 'sagar.khare@nobroker.in').map(u => [u.name, u.role]), [['Sagar K', 'pia']]);
+    assert.equal(S.users.filter(u => u.role === 'trainer').length, 14, 'no duplicates');
+    // Removed later by the Super Admin: not added back at the next start.
+    S.users = S.users.filter(u => u.email !== 'mani.kanta@nobroker.in');
+    pt.close(); st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
+    pt = mk();
+    assert.equal(pt.state().users.some(u => u.email === 'mani.kanta@nobroker.in'), false);
+    pt.close();
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});

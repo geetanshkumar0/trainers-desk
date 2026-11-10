@@ -86,6 +86,24 @@ function createPickTimer(opts) {
   }
   addKcList();
 
+  /* People listed in server/user-list.js, each batch added once. Existing users (same email) are not changed. */
+  function addUserList() {
+    let added = 0;
+    for (const batch of require('./user-list.js')) {
+      if ((S.settings.userListVersion || 0) >= batch.version) continue;
+      for (const [name, email] of batch.users) {
+        const e = String(email).trim().toLowerCase();
+        if (S.users.some(u => String(u.email).toLowerCase() === e)) continue;
+        S.users.push({id: env.uid('u'), name, email: e, role: batch.role, active: true, createdAt: env.now()});
+        if (S.settings.removedEmails) S.settings.removedEmails = S.settings.removedEmails.filter(x => x !== e);
+        added++;
+      }
+      S.settings.userListVersion = batch.version;
+    }
+    if (added) log(`added ${added} users from the user list`);
+  }
+  addUserList();
+
   /* Removals asked for by the team. Each removes one exact booking, once; if two bookings match, neither is touched. */
   const REMOVALS = [
     // Test bookings, as shown in Pick Timer: date, slot (start hour), mode, KC, trainer's name, number of attendees.
