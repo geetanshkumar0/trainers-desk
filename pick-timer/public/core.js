@@ -14,7 +14,9 @@
   // A slot is stored by its start hour (10 means 10:30–11:30).
   const HOURS = [10, 11, 14, 15, 16];
   const DEFAULT_CAP = 8;                               // seats per mode per slot, until the administrator changes it
-  const MODES = ['Online', 'Offline'];
+  const MODES = ['Online', 'Offline'];                 // stored values; always shown as WFH and WFO
+  const MODE_LABEL = {Online:'WFH', Offline:'WFO'};
+  const modeLabel = m => MODE_LABEL[m] || m;
   const CATEGORIES = ['New Hire', 'Lateral'];
   const KC_TYPES = ['Objective', 'Subjective'];
   const ROLES = ['trainer', 'pia', 'admin'];
@@ -102,7 +104,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     if (S.emailLog.length > 3000) S.emailLog.splice(0, S.emailLog.length - 3000);
   }
   function sessionLines(S, s) {
-    return [`KC: ${kcName(S, s.assignedKcId || s.requestedKcId)}`, `Date: ${dateLabel(s.date)}`, `Time: ${slotLabel(s.hour)} IST`, `Mode: ${s.mode}`, `Attempt: ${s.attempt} · ${s.category}`, `Trainer: ${userName(S, s.trainerId)}`];
+    return [`KC: ${kcName(S, s.assignedKcId || s.requestedKcId)}`, `Date: ${dateLabel(s.date)}`, `Time: ${slotLabel(s.hour)} IST`, `Mode: ${modeLabel(s.mode)}`, `Attempt: ${s.attempt} · ${s.category}`, `Trainer: ${userName(S, s.trainerId)}`];
   }
   function mailSession(S, env, s, kind, extra) {
     const atts = S.attendees.filter(a => a.sessionId === s.id);
@@ -132,7 +134,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   function checkSlot(S, env, date, hour, mode, seats, excludeId, isAdminUser) {
     need(validDate(date), 'Choose a valid date.');
     need(HOURS.includes(hour), `Choose one of the slots: ${SLOT_LIST} IST.`);
-    need(MODES.includes(mode), 'Choose Online or Offline.');
+    need(MODES.includes(mode), 'Choose WFH or WFO.');
     need(weekday(date) !== 0, 'Sundays are closed.');
     need(slotStart(date, hour) > env.now(), 'That slot has already started. Choose a later slot.');
     const info = slotInfo(S, date, hour);
@@ -141,7 +143,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       let used = info.used[mode];
       if (excludeId) { const ex = byId(S.sessions, excludeId); if (ex && SEATED.includes(ex.status) && ex.date === date && ex.hour === hour && ex.mode === mode) used -= S.attendees.filter(a => a.sessionId === ex.id).length; }
       const left = info.cap[mode] - used;
-      need(seats <= left, left <= 0 ? `${mode} seats in this slot are full.` : `Only ${left} ${mode} seat${left === 1 ? '' : 's'} left in this slot.`, 409);
+      need(seats <= left, left <= 0 ? `${modeLabel(mode)} seats in this slot are full.` : `Only ${left} ${modeLabel(mode)} seat${left === 1 ? '' : 's'} left in this slot.`, 409);
     }
   }
   function checkDuplicates(S, attendees, kcId, excludeId) {
@@ -393,8 +395,8 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       for (const m of MODES) {
         const key = m === 'Online' ? 'capOnline' : 'capOffline';
         if (p[key] == null || p[key] === '') { delete r[key]; continue; }
-        const c = Number(p[key]); need(Number.isInteger(c) && c >= 0 && c <= 50, `${m} capacity must be a whole number from 0 to 50.`);
-        need(c >= info.used[m], `${info.used[m]} ${m} seats are already booked in this slot, so capacity can't go below ${info.used[m]}.`, 409);
+        const c = Number(p[key]); need(Number.isInteger(c) && c >= 0 && c <= 50, `${modeLabel(m)} capacity must be a whole number from 0 to 50.`);
+        need(c >= info.used[m], `${info.used[m]} ${modeLabel(m)} seats are already booked in this slot, so capacity can't go below ${info.used[m]}.`, 409);
         r[key] = c === seatCap(S) ? undefined : c; if (r[key] === undefined) delete r[key];
       }
     }
@@ -414,7 +416,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
       for (const m of MODES) {
         const own = rule?.[m === 'Online' ? 'capOnline' : 'capOffline'];
         const next = own != null && !reset ? own : cap;
-        need(info.used[m] <= next, `${info.used[m]} ${m} seats are already booked on ${dateLabel(date)}, ${slotLabel(hour)}, so seats per slot can't go below ${info.used[m]}.`, 409);
+        need(info.used[m] <= next, `${info.used[m]} ${modeLabel(m)} seats are already booked on ${dateLabel(date)}, ${slotLabel(hour)}, so seats per slot can't go below ${info.used[m]}.`, 409);
       }
     }
     S.settings.seatCap = cap;
@@ -643,6 +645,6 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
   }
 
   return {HOURS, MODES, CATEGORIES, KC_TYPES, ROLES, REASONS, DEFAULT_CAP, SHEET_COLS, OpError,
-    newState, run, ops, view, slotInfo, availability, applySheet, resultFor, parseSheetDate, parsePercent, parseStatus,
+    newState, run, ops, view, slotInfo, availability, modeLabel, MODE_LABEL, applySheet, resultFor, parseSheetDate, parsePercent, parseStatus,
     istDate, addDays, weekday, slotStart, hourLabel, slotLabel, dateLabel, seedDemo, demoSheet, esc};
 });

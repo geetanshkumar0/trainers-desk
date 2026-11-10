@@ -20,17 +20,17 @@ const people = (n, start = 1) => Array.from({length:n}, (_, i) => ({empId:`NB${s
 const booking = (extra = {}) => ({date:'2026-10-31', hour:11, mode:'Online', requestedKcId:'k1', category:'New Hire', attempt:1, attendees:people(3), ...extra});
 const rejects = (p, re) => assert.rejects(p, e => (re.test(e.message) ? true : assert.fail(`"${e.message}" does not match ${re}`)));
 
-test('8 Online and 8 Offline seats per slot, counted separately', async () => {
+test('8 WFH (Online) and 8 WFO (Offline) seats per slot, counted separately', async () => {
   const {run} = world();
   await run('t1', 'book', booking({attendees:people(8)}));
-  await rejects(run('t2', 'book', booking({attendees:people(1, 50)})), /Online seats in this slot are full/);
+  await rejects(run('t2', 'book', booking({attendees:people(1, 50)})), /WFH seats in this slot are full/);
   await run('t2', 'book', booking({mode:'Offline', attendees:people(8, 50)}));
   await rejects(run('t1', 'book', booking({hour:14, attendees:people(9, 80)})), /at most 8/);
 });
 test('a partly full slot says how many seats are left', async () => {
   const {run} = world();
   await run('t1', 'book', booking({attendees:people(6)}));
-  await rejects(run('t2', 'book', booking({attendees:people(3, 20)})), /Only 2 Online seats left/);
+  await rejects(run('t2', 'book', booking({attendees:people(3, 20)})), /Only 2 WFH seats left/);
 });
 test('Sundays, past slots, odd hours and closed slots are refused', async () => {
   const {run} = world();
@@ -63,7 +63,7 @@ test('attempt 3 waits for the administrator and holds no seats until approved', 
   assert.ok(S.emailLog.some(m => m.to === 'admin@nobroker.in' && /needs approval/.test(m.subject)));
   await rejects(run('t1', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only the administrator/);
   await run('t2', 'book', booking({attendees:people(7, 30)}));
-  await rejects(run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only 1 Online seat left/);
+  await rejects(run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only 1 WFH seat left/);
   await run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true, hour:14});
   const s = S.sessions.find(x => x.id === sessionId);
   assert.equal(s.status, 'booked'); assert.equal(s.hour, 14);
@@ -163,7 +163,7 @@ test('submit is refused while a completed attendee has no score in the sheet', a
 test('slot capacity cannot drop below seats already booked', async () => {
   const {run} = world();
   await run('t1', 'book', booking({attendees:people(5)}));
-  await rejects(run('admin', 'setSlotRule', {date:'2026-10-31', hour:11, capOnline:4}), /5 Online seats are already booked/);
+  await rejects(run('admin', 'setSlotRule', {date:'2026-10-31', hour:11, capOnline:4}), /5 WFH seats are already booked/);
   await run('admin', 'setSlotRule', {date:'2026-10-31', hour:11, capOnline:10});
   await run('t2', 'book', booking({attendees:people(5, 40)}));
 });
@@ -238,7 +238,7 @@ test('the administrator sets the seats for every slot at once', async () => {
   await rejects(run('t1', 'setSeatCap', {cap:10}), /Only the administrator/);
   await run('admin', 'setSlotRule', {date:'2026-10-31', hour:15, capOnline:4, capOffline:12});
   await run('t1', 'book', booking({attendees:people(6)}));
-  await rejects(run('admin', 'setSeatCap', {cap:5}), /6 Online seats are already booked on Sat 31 Oct 2026, 11:30 AM – 12:30 PM/);
+  await rejects(run('admin', 'setSeatCap', {cap:5}), /6 WFH seats are already booked on Sat 31 Oct 2026, 11:30 AM – 12:30 PM/);
   await run('admin', 'setSeatCap', {cap:10});
   const at = h => C.slotInfo(S, '2026-10-31', h).cap;
   assert.deepEqual(at(11), {Online:10, Offline:10});
@@ -278,4 +278,7 @@ test('only the Super Admin removes users and sees email settings and the email l
   // Added back later.
   await run('boss', 'saveUser', {name:'Admin', email:'admin@nobroker.in', role:'admin'});
   assert.deepEqual(S.settings.removedEmails, ['t1@nobroker.in']);
+});
+test('Online and Offline are shown as WFH and WFO', () => {
+  assert.deepEqual(C.MODES.map(C.modeLabel), ['WFH', 'WFO']);
 });

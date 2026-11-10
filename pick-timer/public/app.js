@@ -38,7 +38,8 @@
   const isSuper = () => !!V.me.superAdmin;
   const STATUS = {pending:'Awaiting approval', booked:'Booked', assigned:'KC assigned', submitted:'Submitted', cancelled:'Cancelled', rejected:'Rejected'};
   const badge = s => `<span class="b ${s}">${STATUS[s] || h(s)}</span>`;
-  const modeB = m => `<span class="b ${m.toLowerCase()}">${h(m)}</span>`;
+  const modeB = m => `<span class="b ${m.toLowerCase()}">${h(C.modeLabel(m))}</span>`;   // Online/Offline are shown as WFH/WFO
+  const ML = m => C.modeLabel(m);
   const when = ms => { if (!ms) return '—'; const d = new Date(ms + 19800000); return `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
   const shortDate = d => { const x = C.dateLabel(d).split(' '); return `${x[0]} ${x[1]} ${x[2]}`; };
   const opt = (v, label, sel) => `<option value="${h(v)}"${String(sel) === String(v) ? ' selected' : ''}>${h(label)}</option>`;
@@ -134,21 +135,21 @@ ${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${
       const s = V.slots.find(x => x.date === b.date && x.hour === hr);
       const started = C.slotStart(b.date, hr) <= Date.now();
       return `<div class="lab">${C.slotLabel(hr)}</div>` + C.MODES.map(m => {
-        if (!s) return `<button class="seat" disabled><span class="m">${m}</span><span class="l">Not open yet</span></button>`;
+        if (!s) return `<button class="seat" disabled><span class="m">${ML(m)}</span><span class="l">Not open yet</span></button>`;
         const own = mineSeats(s)[m] || 0, left = s.cap[m] - s.used[m] + own, n = b.attendees.filter(a => a.empId || a.name || a.email).length || 1;
         const dis = s.closed || started || (!pending && left < n);
         const why = s.closed ? s.reason : started ? 'Started' : left <= 0 ? 'Full' : `${left} of ${s.cap[m]} left`;
-        return `<button class="seat ${m}${b.hour === hr && b.mode === m ? ' on' : ''}" data-act="pickSeat" data-hour="${hr}" data-mode="${m}" ${dis ? 'disabled' : ''}><span><span class="m">${m}</span><div class="meter"><i style="width:${Math.min(100, (s.used[m] - own) / (s.cap[m] || 1) * 100)}%"></i></div></span><span class="l">${h(why)}</span></button>`;
+        return `<button class="seat ${m}${b.hour === hr && b.mode === m ? ' on' : ''}" data-act="pickSeat" data-hour="${hr}" data-mode="${m}" ${dis ? 'disabled' : ''}><span><span class="m">${ML(m)}</span><div class="meter"><i style="width:${Math.min(100, (s.used[m] - own) / (s.cap[m] || 1) * 100)}%"></i></div></span><span class="l">${h(why)}</span></button>`;
       }).join('');
     }).join('');
     const trainers = V.users.filter(u => u.active && (u.role === 'trainer' || u.role === 'admin'));
-    return `<div class="head"><div><h1>${editing ? 'Change booking' : isAdmin() ? 'Pre-book a slot' : 'Book a KC'}</h1><p class="muted">Slots run Monday to Saturday: ${C.HOURS.map(x => C.slotLabel(x)).join(', ')} IST. Each slot has ${V.seatCap} Online and ${V.seatCap} Offline seats.</p></div>
+    return `<div class="head"><div><h1>${editing ? 'Change booking' : isAdmin() ? 'Pre-book a slot' : 'Book a KC'}</h1><p class="muted">Slots run Monday to Saturday: ${C.HOURS.map(x => C.slotLabel(x)).join(', ')} IST. Each slot has ${V.seatCap} WFH and ${V.seatCap} WFO seats.</p></div>
 ${editing ? `<a class="btn" href="#/session/${b.editId}">Back to booking</a>` : ''}</div>
 <div class="card"><h2>1. Choose a date and slot</h2><div class="days">${days.map(d => { const open = V.slots.some(s => s.date === d && !s.closed && C.slotStart(d, s.hour) > Date.now()); const x = C.dateLabel(d).split(' ');
   return `<button class="day${b.date === d ? ' on' : ''}" data-act="pickDay" data-date="${d}" ${open ? '' : 'disabled'}><span>${x[0]}</span><b>${x[1]}</b><span>${x[2]}</span></button>`; }).join('')}</div>
-<div class="slots" style="margin-top:14px"><div></div><div class="muted small"><b>Online</b></div><div class="muted small"><b>Offline</b></div>${slotRows}</div></div>
+<div class="slots" style="margin-top:14px"><div></div><div class="muted small"><b>WFH</b></div><div class="muted small"><b>WFO</b></div>${slotRows}</div></div>
 <form class="card" data-form="book"><h2>2. Booking details</h2>
-${b.hour != null ? `<div class="note info"><b>${h(C.dateLabel(b.date))}</b>, ${C.slotLabel(b.hour)} IST · ${h(b.mode)}</div>` : `<div class="note">Pick a slot above.</div>`}
+${b.hour != null ? `<div class="note info"><b>${h(C.dateLabel(b.date))}</b>, ${C.slotLabel(b.hour)} IST · ${h(ML(b.mode))}</div>` : `<div class="note">Pick a slot above.</div>`}
 <div class="form cols">${isAdmin() && !editing ? `<label class="f">Trainer<select data-draft="trainerId" required><option value="">Choose…</option>${trainers.map(u => opt(u.id, u.name + (u.role === 'admin' ? ' (Admin)' : ''), b.trainerId)).join('')}</select></label>` : ''}
 <label class="f">KC requested<select data-draft="requestedKcId" required><option value="">Choose…</option>${V.kcs.filter(k => k.active !== false).map(k => opt(k.id, `${k.name} (${k.type})`, b.requestedKcId)).join('')}</select></label>
 <label class="f">Category<select data-draft="category">${C.CATEGORIES.map(c => opt(c, c, b.category)).join('')}</select></label>
@@ -179,12 +180,12 @@ ${b.attendees.map((a, i) => `<tr><td class="muted">${i + 1}</td><td><input data-
       for (const d of days) {
         const info = C.HOURS.includes(hr) ? slotView(d, hr) : {closed:true, reason:'Not a slot now'}, past = C.slotStart(d, hr) + 3600e3 < Date.now();
         const list = V.sessions.filter(s => s.date === d && s.hour === hr && (s.status !== 'cancelled' || ui.showCancelled));
-        const seats = info && !info.closed && !past ? `<div class="seats">${C.MODES.map(m => { const left = info.cap[m] - info.used[m]; return `<span class="${left <= 0 ? 'full' : m === 'Online' ? 'on' : 'off'}" title="${m} seats left">${m === 'Online' ? 'On' : 'Off'} ${left}/${info.cap[m]}</span>`; }).join('')}</div>` : '';
+        const seats = info && !info.closed && !past ? `<div class="seats">${C.MODES.map(m => { const left = info.cap[m] - info.used[m]; return `<span class="${left <= 0 ? 'full' : m === 'Online' ? 'on' : 'off'}" title="${ML(m)} seats left">${ML(m)} ${left}/${info.cap[m]}</span>`; }).join('')}</div>` : '';
         cells.push(`<div class="${info?.closed ? 'closed' : past ? 'past' : ''}">${info?.closed ? `<div class="muted small">${h(info.reason)}</div>` : seats}
 ${list.map(s => `<a class="chip ${s.mode} st-${s.status}" href="#/session/${s.id}" title="${h(STATUS[s.status])}"><b>${h(kname(s.assignedKcId || s.requestedKcId))}</b><br>${s.attendees.length} · ${h(uname(s.trainerId).split(' ')[0])}${s.attempt > 1 ? ` · A${s.attempt}` : ''}</a>`).join('')}</div>`);
       }
     }
-    return `<div class="head"><div><h1>Calendar</h1><p class="muted">Week of ${h(C.dateLabel(wk))}. ${isTrainer() ? 'Your bookings, with seats left in each slot.' : 'All bookings. Blue is Online, amber is Offline; ✓ means submitted.'}</p></div>
+    return `<div class="head"><div><h1>Calendar</h1><p class="muted">Week of ${h(C.dateLabel(wk))}. ${isTrainer() ? 'Your bookings, with seats left in each slot.' : 'All bookings. Blue is WFH, amber is WFO; ✓ means submitted.'}</p></div>
 <div class="row"><label class="check small"><input type="checkbox" data-act="toggleCancelled" ${ui.showCancelled ? 'checked' : ''}> Show cancelled</label>
 <a class="btn" href="#/calendar?week=${C.addDays(wk, -7)}">‹ Previous</a><a class="btn" href="#/calendar">This week</a><a class="btn" href="#/calendar?week=${C.addDays(wk, 7)}">Next ›</a></div></div>
 <div class="scroll"><div class="cal">${cells.join('')}</div></div>`;
@@ -200,7 +201,7 @@ ${list.map(s => `<a class="chip ${s.mode} st-${s.status}" href="#/session/${s.id
     const tabs = isTrainer() ? [['open', 'Upcoming and open'], ['submitted', 'Submitted'], ['all', 'All']] : [['open', 'Open'], ['toassign', 'To assign'], ['toclose', 'To close out'], ['submitted', 'Submitted'], ['all', 'All']];
     return `<div class="head"><div><h1>${isTrainer() ? 'My bookings' : 'Sessions'}</h1><p class="muted">${list.length} session${list.length === 1 ? '' : 's'} shown.</p></div>${isTrainer() ? '<a class="btn primary" href="#/book">Book a KC</a>' : ''}</div>
 <div class="row" style="margin-bottom:12px"><div class="seg">${tabs.map(([k, l]) => `<button data-act="sessTab" data-k="${k}" class="${f.status === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-<select data-act="sessMode"><option value="">All modes</option>${C.MODES.map(m => opt(m, m, f.mode)).join('')}</select>
+<select data-act="sessMode"><option value="">All modes</option>${C.MODES.map(m => opt(m, ML(m), f.mode)).join('')}</select>
 <input type="search" data-act="sessQ" placeholder="Search KC, trainer, Emp ID or name" value="${h(f.q)}" style="min-width:260px"></div>
 <div class="card flush scroll"><table class="t"><thead><tr><th>Date</th><th>Slot</th><th>Mode</th><th>KC</th>${isTrainer() ? '' : '<th>Trainer</th>'}<th class="num">Attendees</th><th>Attempt</th><th>Status</th></tr></thead><tbody>
 ${list.map(s => `<tr class="click" data-act="openSession" data-id="${s.id}"><td class="nowrap">${h(shortDate(s.date))}</td><td class="nowrap">${C.slotLabel(s.hour)}</td><td>${modeB(s.mode)}</td>
@@ -214,7 +215,7 @@ ${list.map(s => `<tr class="click" data-act="openSession" data-id="${s.id}"><td 
     const s = session(r.parts[1]); if (!s) return `<div class="note bad">This session was not found, or you can't see it.</div>`;
     const canEdit = (isAdmin() || (isTrainer() && s.trainerId === V.me.id)) && ['pending', 'booked'].includes(s.status);
     const ap = V.approvals.filter(a => a.sessionId === s.id).slice(-1)[0];
-    const facts = [['Date', C.dateLabel(s.date)], ['Slot', C.slotLabel(s.hour) + ' IST'], ['Mode', s.mode], ['Trainer', uname(s.trainerId)], ['Category', s.category], ['Attempt', s.attempt],
+    const facts = [['Date', C.dateLabel(s.date)], ['Slot', C.slotLabel(s.hour) + ' IST'], ['Mode', ML(s.mode)], ['Trainer', uname(s.trainerId)], ['Category', s.category], ['Attempt', s.attempt],
       ['KC requested', kname(s.requestedKcId)], ['KC assigned', s.assignedKcId ? kname(s.assignedKcId) : '—'], ['KC type', s.assignedKcId ? kc(s.assignedKcId)?.type : '—'], ['Invigilator', s.invigilatorId ? uname(s.invigilatorId) : '—'],
       ['Booked by', `${uname(s.createdBy)}, ${when(s.createdAt)}`], ...(s.submittedAt ? [['Submitted', `${uname(s.submittedBy)}, ${when(s.submittedAt)}`]] : [])];
     let action = '';
@@ -259,9 +260,9 @@ ${closing ? `<div class="row" style="padding:14px 18px;border-top:1px solid var(
       return `<div class="card"><div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${h(kname(s.requestedKcId))} · attempt 3</h2>
 <div class="muted">${h(uname(s.trainerId))} asked ${when(a.at)} for ${h(C.dateLabel(s.date))}, ${C.slotLabel(s.hour)} · ${modeB(s.mode)}</div></div><a href="#/session/${s.id}">Open</a></div>
 <table class="t" style="margin:10px 0"><thead><tr><th>Emp ID</th><th>Name</th><th>Email ID</th></tr></thead><tbody>${s.attendees.map(x => `<tr><td class="mono">${h(x.empId)}</td><td>${h(x.name)}</td><td class="small">${h(x.email)}</td></tr>`).join('')}</tbody></table>
-<div class="note ${left >= s.attendees.length ? 'good' : 'warn'}">${left >= s.attendees.length ? `${left} ${s.mode} seats are free in this slot.` : `Only ${Math.max(0, left)} ${s.mode} seats are free in this slot. Move it to another slot to approve.`}</div>
+<div class="note ${left >= s.attendees.length ? 'good' : 'warn'}">${left >= s.attendees.length ? `${left} ${ML(s.mode)} seats are free in this slot.` : `Only ${Math.max(0, left)} ${ML(s.mode)} seats are free in this slot. Move it to another slot to approve.`}</div>
 <form class="row" data-form="decide" data-id="${a.id}"><label class="f">Date<select name="date">${[...new Set(V.slots.map(x => x.date))].map(d => opt(d, shortDate(d), s.date)).join('')}</select></label>
-<label class="f">Slot<select name="hour">${C.HOURS.map(x => opt(x, C.slotLabel(x), s.hour)).join('')}</select></label><label class="f">Mode<select name="mode">${C.MODES.map(m => opt(m, m, s.mode)).join('')}</select></label>
+<label class="f">Slot<select name="hour">${C.HOURS.map(x => opt(x, C.slotLabel(x), s.hour)).join('')}</select></label><label class="f">Mode<select name="mode">${C.MODES.map(m => opt(m, ML(m), s.mode)).join('')}</select></label>
 <label class="f" style="flex:1">Note to trainer (optional)<input name="note"></label><button class="btn primary" name="approve" value="1">Approve</button><button class="btn danger" name="approve" value="0">Reject</button></form></div>`; };
     return `<div class="head"><div><h1>Approvals</h1><p class="muted">Attempt-3 bookings wait here. Approving books the seats and emails everyone.</p></div></div>
 ${pend.map(card).join('') || '<div class="note">Nothing is waiting for approval.</div>'}
@@ -280,22 +281,22 @@ ${done.map(a => { const s = session(a.sessionId); return `<tr><td>${when(a.decid
       for (const d of days) {
         const info = slotView(d, hr), rule = V.slotRules.find(x => x.date === d && x.hour === hr);
         cells.push(`<div class="${info.closed ? 'closed' : ''}" data-act="editSlot" data-date="${d}" data-hour="${hr}" style="cursor:pointer;${ed && ed.date === d && ed.hour === hr ? 'outline:2px solid var(--brand);outline-offset:-2px' : ''}">
-${info.closed ? `<div class="small"><b>Closed</b><br><span class="muted">${h(info.reason)}</span></div>` : `<div class="small">${C.MODES.map(m => `<div><span class="b ${m.toLowerCase()}">${m}</span> ${info.used[m]}/${info.cap[m]}</div>`).join('')}</div>`}
+${info.closed ? `<div class="small"><b>Closed</b><br><span class="muted">${h(info.reason)}</span></div>` : `<div class="small">${C.MODES.map(m => `<div>${modeB(m)} ${info.used[m]}/${info.cap[m]}</div>`).join('')}</div>`}
 ${rule && !info.closed && (rule.capOnline != null || rule.capOffline != null) ? '<div class="muted small">custom capacity</div>' : ''}</div>`);
       }
     }
     let panel = '';
     if (ed) { const info = slotView(ed.date, ed.hour), rule = V.slotRules.find(x => x.date === ed.date && x.hour === ed.hour);
       panel = `<form class="card" data-form="slotRule" data-date="${ed.date}" data-hour="${ed.hour}"><h2>${h(C.dateLabel(ed.date))}, ${C.slotLabel(ed.hour)}</h2>
-<div class="form cols"><label class="f">Online seats<input type="number" min="0" max="50" name="capOnline" value="${rule?.capOnline ?? V.seatCap}"><span class="muted small">${info.used.Online} booked</span></label>
-<label class="f">Offline seats<input type="number" min="0" max="50" name="capOffline" value="${rule?.capOffline ?? V.seatCap}"><span class="muted small">${info.used.Offline} booked</span></label>
+<div class="form cols"><label class="f">WFH seats<input type="number" min="0" max="50" name="capOnline" value="${rule?.capOnline ?? V.seatCap}"><span class="muted small">${info.used.Online} booked</span></label>
+<label class="f">WFO seats<input type="number" min="0" max="50" name="capOffline" value="${rule?.capOffline ?? V.seatCap}"><span class="muted small">${info.used.Offline} booked</span></label>
 <label class="f">Reason if closed<input name="note" value="${h(rule?.note || '')}" placeholder="e.g. Training audit"></label></div>
 <label class="check" style="margin-top:12px"><input type="checkbox" name="closed" ${rule?.closed ? 'checked' : ''}> Close this slot</label>
 <div class="row" style="margin-top:14px"><button class="btn primary">Save slot</button><button type="button" class="btn ghost" data-act="closeSlotEdit">Close</button><a class="btn" href="#/book">Pre-book this week</a></div></form>`; }
     return `<div class="head"><div><h1>Slots</h1><p class="muted">Click a slot to change its seats or close it. Closing doesn't cancel existing bookings. Sundays are always closed.</p></div>
 <div class="row"><a class="btn" href="#/slots?week=${C.addDays(wk, -7)}">‹ Previous</a><a class="btn" href="#/slots">This week</a><a class="btn" href="#/slots?week=${C.addDays(wk, 7)}">Next ›</a></div></div>
 <form class="card seatcap" data-form="seatCap"><div class="row" style="align-items:flex-end">
-<label class="f" style="max-width:220px">Seats per slot, for every slot<input type="number" name="cap" min="1" max="50" value="${V.seatCap}" required><span class="muted small">Online and Offline each. Now ${V.seatCap}.</span></label>
+<label class="f" style="max-width:220px">Seats per slot, for every slot<input type="number" name="cap" min="1" max="50" value="${V.seatCap}" required><span class="muted small">WFH and WFO each. Now ${V.seatCap}.</span></label>
 <label class="check" style="margin-bottom:10px"><input type="checkbox" name="resetCustom" ${V.slotRules.some(x => x.date >= V.today && (x.capOnline != null || x.capOffline != null)) ? '' : 'disabled'}> Also replace seat numbers set for individual slots (${V.slotRules.filter(x => x.date >= V.today && (x.capOnline != null || x.capOffline != null)).length} from today on)</label>
 <button class="btn primary" style="margin-bottom:6px">Apply to all slots</button></div></form>
 ${panel}<div class="scroll"><div class="cal">${cells.join('')}</div></div>`;
@@ -315,7 +316,7 @@ ${panel}<div class="scroll"><div class="cal">${cells.join('')}</div></div>`;
     const sel = (k, label, opts) => `<label class="f">${label}<select data-af="${k}"><option value="">All</option>${opts.map(([v, l]) => opt(v, l, f[k])).join('')}</select></label>`;
     const filters = `<div class="card"><div class="row" style="margin-bottom:12px"><div class="seg">${[['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['month', 'This month']].map(([k, l]) => `<button data-act="aRange" data-k="${k}">${l}</button>`).join('')}</div></div>
 <div class="form cols"><label class="f">From<input type="date" data-af="from" value="${f.from}"></label><label class="f">To<input type="date" data-af="to" value="${f.to}"></label>
-${sel('mode', 'Mode', C.MODES.map(m => [m, m]))}${sel('kcType', 'KC type', C.KC_TYPES.map(m => [m, m]))}${sel('category', 'Category', C.CATEGORIES.map(m => [m, m]))}
+${sel('mode', 'Mode', C.MODES.map(m => [m, ML(m)]))}${sel('kcType', 'KC type', C.KC_TYPES.map(m => [m, m]))}${sel('category', 'Category', C.CATEGORIES.map(m => [m, m]))}
 ${isTrainer() ? '' : sel('trainerId', 'Trainer', V.users.filter(u => u.role === 'trainer').map(u => [u.id, u.name]))}${isTrainer() ? '' : sel('invigilatorId', 'Invigilator', V.users.filter(u => u.role !== 'trainer').map(u => [u.id, u.name]))}
 ${sel('kcId', 'KC', V.kcs.map(k => [k.id, k.name]))}${sel('attempt', 'Attempt', [[1, '1'], [2, '2'], [3, '3']])}</div></div>`;
     if (!a) return `<div class="head"><div><h1>Analytics</h1></div></div>${filters}<div class="muted">Loading…</div>`;
@@ -340,7 +341,7 @@ ${a.detail.slice(0, 500).map(d => `<tr><td class="nowrap">${h(shortDate(d.date))
       : [['date', 'Date of KC'], ['slot', 'Slot'], ['mode', 'Mode of KC'], ['kc', 'KC Name'], ['kcType', 'KC Type'], ['category', 'Category'], ['attempt', 'Attempt'], ['trainer', "Trainer's Name"], ['invigilator', 'Invigilator'], ['empId', 'Emp ID'], ['name', 'Name'], ['email', 'Email ID'], ['status', 'KC completed?'], ['obtained', 'Obtained Percentage'], ['result', 'Status']];
     const rows = kind === 'kcs' ? a.kcs : a.detail;
     const cell = v => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${(/^[=+\-@]/.test(s) ? "'" : '') + s.replace(/"/g, '""')}"` : s; };
-    const csv = [cols.map(c => c[1]).join(','), ...rows.map(r => cols.map(c => cell(r[c[0]])).join(','))].join('\r\n');
+    const csv = [cols.map(c => c[1]).join(','), ...rows.map(r => cols.map(c => cell(c[0] === 'mode' ? ML(r.mode) : r[c[0]])).join(','))].join('\r\n');
     const name = `${kind === 'kcs' ? 'kc-wise-results' : 'kc-attendee-results'}-${a.from}${a.to !== a.from ? '-to-' + a.to : ''}.csv`;
     if (window.PREVIEW_API) return window.PREVIEW_API.download(name, csv);
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob(['﻿' + csv], {type:'text/csv'})); link.download = name; document.body.appendChild(link); link.click(); link.remove();
@@ -501,7 +502,7 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
     async cancel(f, d) { closeModal(); await op('cancelBooking', {sessionId:f.dataset.id, reason:d.reason}, 'Booking cancelled. Everyone has been emailed.'); },
     async assign(f, d) { await op('assignKc', {sessionId:f.dataset.id, kcId:d.kcId}, 'KC assigned. You are recorded as the invigilator.'); },
     async decide(f, d, submitter) { await op('decideApproval', {approvalId:f.dataset.id, approve:submitter?.value === '1', date:d.date, hour:Number(d.hour), mode:d.mode, note:d.note}, submitter?.value === '1' ? 'Approved and booked.' : 'Request rejected.'); },
-    async seatCap(f, d) { await op('setSeatCap', {cap:Number(d.cap), resetCustom:!!d.resetCustom}, `Every slot now has ${d.cap} Online and ${d.cap} Offline seats.`); },
+    async seatCap(f, d) { await op('setSeatCap', {cap:Number(d.cap), resetCustom:!!d.resetCustom}, `Every slot now has ${d.cap} WFH and ${d.cap} WFO seats.`); },
     async slotRule(f, d) { if (await op('setSlotRule', {date:f.dataset.date, hour:Number(f.dataset.hour), closed:d.closed, note:d.note, capOnline:d.capOnline, capOffline:d.capOffline}, 'Slot saved.') !== null) { ui.slotEdit = null; render(); } },
     async saveUser(f, d) { const r = await op('saveUser', {id:f.dataset.id || undefined, name:d.name, email:d.email, role:d.role || 'admin', active:d.active === undefined ? true : d.active}, f.dataset.id ? 'User saved.' : 'User added.'); if (r) go('#/admin/users'); },
     async saveKc(f, d) { const r = await op('saveKc', {id:f.dataset.id || undefined, name:d.name, type:d.type, active:d.active === undefined ? true : d.active}, f.dataset.id ? 'KC saved.' : 'KC added.'); if (r) go('#/admin/kcs'); },
