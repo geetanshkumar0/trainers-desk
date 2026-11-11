@@ -22,4 +22,10 @@ module.exports = [
     ['Mani Reddy', 'mani.kanta@nobroker.in'],
     ['Sweety Chandrapaul', 'sweety.chandrapaul@nobroker.in'],
   ] },
+  { version: 2, role: 'trainer', users: [
+    ['Harishwar Reddy', 'a.harishwar@nobroker.in'],
+    ['Mohit Nandi', 'mohit.manoj@nobroker.in'],
+    ['Manikandan Selvam', 'manikandan.selvam@nobroker.in'],
+    ['Ashin Krishnan', 'ashin.krishnan@nobroker.in'],
+  ] },
 ];

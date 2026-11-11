@@ -245,7 +245,8 @@ test('the trainers in user-list.js are added once; people already in Pick Timer 
   try {
     let pt = mk(); let S = pt.state();
     let trainers = S.users.filter(u => u.role === 'trainer');
-    assert.equal(trainers.length, 15);
+    assert.equal(trainers.length, 19);
+    assert.ok(trainers.some(u => u.email === 'mohit.manoj@nobroker.in' && u.name === 'Mohit Nandi'), 'batch 2, email in lower case');
     const amzad = trainers.find(u => u.email === 'amzad.bf@nobroker.in');
     assert.deepEqual([amzad.name, amzad.active], ['BILLUR FAKRUDDIN SAB AMZAD', true]);
     // Someone already in Pick Timer with another role or name keeps it, even if the list is read again.
@@ -255,7 +256,7 @@ test('the trainers in user-list.js are added once; people already in Pick Timer 
     pt.close(); let st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
     pt = mk(); S = pt.state();
     assert.deepEqual(S.users.filter(u => u.email === 'sagar.khare@nobroker.in').map(u => [u.name, u.role]), [['Sagar K', 'pia']]);
-    assert.equal(S.users.filter(u => u.role === 'trainer').length, 14, 'no duplicates');
+    assert.equal(S.users.filter(u => u.role === 'trainer').length, 18, 'no duplicates');
     // Removed later by the Super Admin: not added back at the next start.
     S.users = S.users.filter(u => u.email !== 'mani.kanta@nobroker.in');
     pt.close(); st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
