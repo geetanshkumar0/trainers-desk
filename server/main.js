@@ -24,6 +24,7 @@ import * as ojt from './services/ojt.js';
 import { MODE as WA_MODE } from './services/whatsapp.js';
 import routes, { setPickTimerAccess } from './routes.js';
 import { readScoreSheet } from './scoresheet.js';
+import * as data from './data.js';
 import { isoDay } from './dates.js';
 import { send, json, redirect, html, esc, serveStatic } from './web.js';
 
@@ -35,7 +36,10 @@ const { createPickTimer } = createRequire(import.meta.url)('../pick-timer/server
 let pickTimer = null;
 
 // Pick Timer has its own admins and roles: Trainer Desk only tells it who signed in.
-const pickTimerUser = email => ({ email });
+// Trainer Desk access: anyone Trainer Desk knows (head, manager, mentor, trainer or admin in its trainer map).
+const hasDeskAccess = email => data.session(email).role !== 'none';
+// Pick Timer gets the e-mail, and whether this person may also open Trainer Desk (for its "Back to Trainer Desk" link).
+const pickTimerUser = email => ({ email, trainerDesk: hasDeskAccess(email) });
 
 
 function page(title, body) {
@@ -136,6 +140,8 @@ async function handle(req, res) {
   /* ---- the page ---- */
   if (sub === '/' || sub === '/index.html') {
     if (!user) return redirect(res, BASE + '/auth/login');
+    // Someone who only has Pick Timer (not in Trainer Desk) goes straight to Pick Timer.
+    if (!hasDeskAccess(user) && pickTimer && pickTimer.hasAccess(pickTimerUser(user))) return redirect(res, BASE + '/pick-timer/');
     let page = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
     if (SERVER.demo) page = page.replace('<html lang="en">', '<html lang="en" data-preview>');
     return html(res, 200, page);

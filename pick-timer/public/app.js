@@ -24,7 +24,8 @@
   function setViewAs(role) { try { if (role && role !== 'super') sessionStorage.setItem('kc-role', role); else sessionStorage.removeItem('kc-role'); } catch (e) { /* tab-only setting */ } }
   window.KCRole = viewAs;
 
-  let V = null, B = null;            // view from the server; sign-in info when signed out
+  let V = null, B = null;
+  let TD = true;   // may this person also open Trainer Desk? If not, no link back to it.            // view from the server; sign-in info when signed out
   const ui = {analytics:null, aFilters:null, book:null, marks:{}, slotEdit:null, sessFilter:{status:'open', q:'', mode:''}, appsScript:null, signin:{}, busy:false};
 
   /* ---------- helpers ---------- */
@@ -87,7 +88,7 @@
   }
   function layout(body) {
     const cur = route().parts[0] || '';
-    return `<header class="top"><a class="back-td" href="../" title="Back to Trainer Desk">← Trainer Desk</a><a class="brand" href="#/"><span class="logo">${clockIcon()}</span>${h(V.settings.name)}</a>
+    return `<header class="top">${TD ? '<a class="back-td" href="../" title="Back to Trainer Desk">← Trainer Desk</a>' : ''}<a class="brand" href="#/"><span class="logo">${clockIcon()}</span>${h(V.settings.name)}</a>
 <nav class="nav">${navLinks(cur)}</nav>
 <div class="who"><span>${h(V.me.name)}</span>${V.me.realRole === 'admin' ? `<label class="role-switch" title="Switch role to use Pick Timer as another role would"><span class="sr">Role</span><select data-role-switch>${[...(V.me.realSuper ? ['super'] : []), ...C.ROLES.slice().reverse()].map(r => opt(r, ROLE[r], V.me.superAdmin ? 'super' : V.me.role)).join('')}</select></label>` : `<span class="role">${roleOf(V.me)}</span>`}<button class="btn sm ghost" data-act="logout">Sign out</button></div></header><main>${body}</main>`;
   }
@@ -114,7 +115,7 @@
     return `${banner}<div class="signin"><div class="card"><div class="brand"><span class="logo">${clockIcon()}</span>${h(B?.site || 'Pick Timer')}</div>
 <p class="muted">Knowledge Check scheduling for trainers and invigilators.</p>
 ${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${h(B?.email || 'Your account')} does not have access to Pick Timer yet. Pick Timer has its own users and roles: ask a Pick Timer administrator to add you under Site administration › Users.</div>`}
-<div class="row" style="margin-top:14px"><a class="btn primary" href="../">Back to Trainer Desk</a><a class="btn ghost" href="../auth/logout">Use a different Google account</a></div></div></div>`;
+<div class="row" style="margin-top:14px">${TD ? '<a class="btn primary" href="../">Back to Trainer Desk</a>' : ''}<a class="btn ghost" href="../auth/logout">Use a different Google account</a></div></div></div>`;
   }
 
   /* ---------- booking (trainer, and admin pre-booking) ---------- */
@@ -535,7 +536,7 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
 
   /* ---------- start ---------- */
   async function boot() {
-    try { const r = await API.boot(); if (r.view) { V = r.view; B = null; } else { V = null; B = r; } }
+    try { const r = await API.boot(); TD = r.trainerDesk !== false; if (r.view) { V = r.view; B = null; } else { V = null; B = r; } }
     catch (e) { if (e.status === 401) { location.href = '../auth/login?next=' + encodeURIComponent(location.pathname); return; } V = null; B = {site:'Pick Timer', error:'Could not reach the server. ' + e.message}; }
     render();
   }

@@ -28,7 +28,7 @@ function start() {
     defaultSheet: { sheetId: '1VpY6PK810t2XFpLx1df5-ZUaBXPDlHDhz0ddJpTvAss', tab: 'KC Sheet' } });
   // As Trainer Desk does: it passes only the signed-in e-mail (here a header).
   server = http.createServer((req, res) => {
-    pt.handle(req, res, new URL(req.url, 'http://x').pathname.replace(/^\/pick-timer\//, ''), { email: req.headers['x-test-user'] });
+    pt.handle(req, res, new URL(req.url, 'http://x').pathname.replace(/^\/pick-timer\//, ''), { email: req.headers['x-test-user'], trainerDesk: req.headers['x-test-desk'] !== 'no' });
   });
   return new Promise(r => server.listen(0, () => { base = 'http://127.0.0.1:' + server.address().port + '/pick-timer/'; r(); }));
 }
@@ -263,4 +263,14 @@ test('the trainers in user-list.js are added once; people already in Pick Timer 
     assert.equal(pt.state().users.some(u => u.email === 'mani.kanta@nobroker.in'), false);
     pt.close();
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('someone with Pick Timer but not Trainer Desk gets no link back to Trainer Desk', async () => {
+  const both = await as(ADMIN, 'GET', 'api/boot');
+  assert.equal(both.data.trainerDesk, true);
+  const only = await as(ADMIN, 'GET', 'api/boot', null, { 'X-Test-Desk': 'no' });
+  assert.equal(only.data.trainerDesk, false);
+  assert.ok(only.data.view, 'Pick Timer still opens');
+  const neither = await as('nobody@nobroker.in', 'GET', 'api/boot', null, { 'X-Test-Desk': 'no' });
+  assert.deepEqual([neither.data.noAccess, neither.data.trainerDesk], [true, false]);
 });

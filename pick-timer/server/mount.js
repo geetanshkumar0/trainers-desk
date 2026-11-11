@@ -197,8 +197,8 @@ function createPickTimer(opts) {
 
       if (req.method === 'GET' && sub === 'api/boot') {
         const me = userFor(who);
-        if (me) { if (!me.lastLogin || Date.now() - me.lastLogin > 3600e3) await mutate(() => { me.lastLogin = Date.now(); }); return send(res, 200, {view: Core.view(S, me.id, Date.now(), role(req))}); }
-        return send(res, 200, {noAccess: true, email: who.email, site: S.settings.name});
+        if (me) { if (!me.lastLogin || Date.now() - me.lastLogin > 3600e3) await mutate(() => { me.lastLogin = Date.now(); }); return send(res, 200, {view: Core.view(S, me.id, Date.now(), role(req)), trainerDesk: who.trainerDesk !== false}); }
+        return send(res, 200, {noAccess: true, email: who.email, site: S.settings.name, trainerDesk: who.trainerDesk !== false});
       }
       if (req.method === 'POST' && sub === 'api/op') {
         const me = userFor(who);
