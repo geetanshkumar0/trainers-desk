@@ -516,13 +516,22 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     const totals = blank(), days = new Map(), kcs = new Map(), detail = [];
     for (const s of sessions) {
       const d = days.get(s.date) || {date:s.date, ...blank()}; days.set(s.date, d);
-      const k = kcs.get(s.assignedKcId) || {kcId:s.assignedKcId, kc:kcName(S, s.assignedKcId), type:byId(S.kcs, s.assignedKcId)?.type || '', sessions:0, ...blank()}; kcs.set(s.assignedKcId, k);
+      const k = kcs.get(s.assignedKcId) || {kcId:s.assignedKcId, kc:kcName(S, s.assignedKcId), type:byId(S.kcs, s.assignedKcId)?.type || '', sessions:0, ...blank(), people:new Map()}; kcs.set(s.assignedKcId, k);
       for (const x of [totals, d]) x.assigned++; k.sessions++;
       for (const a of S.attendees.filter(x => x.sessionId === s.id)) {
-        for (const x of [totals, d, k]) x.attendees++;
+        for (const x of [totals, d]) x.attendees++;
         const r = s.status === 'submitted' && a.completion === 'completed' ? resultFor(S, s, a) : null;
         if (s.status !== 'submitted') for (const x of [totals, d, k]) x.pending++;
-        else if (a.completion === 'completed') { for (const x of [totals, d, k]) x.completed++; if (r) for (const x of [totals, d, k]) x[r.pass ? 'pass' : 'fail']++; }
+        else if (a.completion === 'completed') {
+          for (const x of [totals, d]) x.completed++; if (r) for (const x of [totals, d]) x[r.pass ? 'pass' : 'fail']++;
+          // KC-wise: one person per KC, whatever their attempts; their latest attempt (with a result) decides Pass or Fail.
+          const key = norm(a.empId).replace(/\s+/g, ''), prev = k.people.get(key);
+          const rank = [s.attempt, s.date, s.hour];
+          const later = !prev || (s.attempt > prev.rank[0] || s.attempt === prev.rank[0] && (s.date > prev.rank[1] || s.date === prev.rank[1] && s.hour > prev.rank[2]));
+          if (!prev) k.people.set(key, {rank, pass:r ? r.pass : null});
+          else if (later) k.people.set(key, {rank, pass:r ? r.pass : prev.pass});    // no score yet for the later attempt: keep the earlier one
+          else if (prev.pass == null && r) prev.pass = r.pass;
+        }
         else for (const x of [totals, d, k]) x.notCompleted++;
         detail.push({date:s.date, slot:slotLabel(s.hour), mode:s.mode, kc:kcName(S, s.assignedKcId), kcType:byId(S.kcs, s.assignedKcId)?.type || '', category:s.category, attempt:s.attempt,
           trainer:userName(S, s.trainerId), invigilator:userName(S, s.invigilatorId), empId:a.empId, name:a.name, email:a.email,
@@ -532,7 +541,11 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     }
     const rate = x => x.pass + x.fail ? Math.round(x.pass / (x.pass + x.fail) * 1000) / 10 : null;
     return {from, to, totals:{...totals, passRate:rate(totals)}, days:[...days.values()].sort((a, b) => a.date < b.date ? -1 : 1),
-      kcs:[...kcs.values()].map(k => ({...k, passRate:rate(k)})).sort((a, b) => b.attendees - a.attendees), detail:detail.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0)};
+      kcs:[...kcs.values()].map(({people, ...k}) => {
+        // Attendees here are people who completed this KC, each counted once (a 2nd attempt is the same person).
+        const ppl = [...people.values()], x = {...k, attendees:ppl.length, completed:ppl.length, pass:ppl.filter(q => q.pass === true).length, fail:ppl.filter(q => q.pass === false).length};
+        return {...x, passRate:rate(x)};
+      }).sort((a, b) => b.attendees - a.attendees || b.sessions - a.sessions), detail:detail.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0)};
   };
 
   /* ---------- running an operation ---------- */

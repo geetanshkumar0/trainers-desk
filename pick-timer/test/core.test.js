@@ -282,3 +282,20 @@ test('only the Super Admin removes users and sees email settings and the email l
 test('Online and Offline are shown as WFH and WFO', () => {
   assert.deepEqual(C.MODES.map(C.modeLabel), ['WFH', 'WFO']);
 });
+test('KC-wise results: only people who completed, each counted once; the latest attempt decides', () => {
+  const {S, env} = world();
+  const sess = (id, date, attempt, status, marks) => {
+    S.sessions.push({id, date, hour:10, mode:'Online', trainerId:'t1', assignedKcId:'k1', status, attempt, category:'New Hire'});
+    for (const [empId, completion] of marks) S.attendees.push({id:id + empId, sessionId:id, empId, name:empId, email:'', completion, reason:completion === 'not_completed' ? 'Absent' : ''});
+  };
+  const res = (empId, date, attempt, pass) => S.results.push({key:empId + date + attempt, row:2, empId, date, attempt, obtained:pass ? 80 : 40, passing:'', pass, kcName:''});
+  sess('A', '2026-10-20', 1, 'submitted', [['NB1', 'completed'], ['NB2', 'completed'], ['NB3', 'not_completed'], ['NB4', 'completed']]);
+  sess('B', '2026-10-25', 2, 'submitted', [['nb1 ', 'completed'], ['NB4', 'completed']]);
+  sess('C', '2026-10-28', 1, 'assigned', [['NB5', '']]);
+  res('NB1', '2026-10-20', 1, false); res('NB2', '2026-10-20', 1, true); res('NB4', '2026-10-20', 1, false);
+  res('NB1', '2026-10-25', 2, true);                                                   // NB4 has no 2nd-attempt score yet
+  const an = C.ops.analytics(S, env, S.users.find(u => u.role === 'admin'), {from:'2026-10-01', to:'2026-10-30'});
+  const k = an.kcs[0];
+  assert.deepEqual([k.sessions, k.attendees, k.pass, k.fail, k.passRate], [3, 3, 2, 1, 66.7], 'NB1 once (passed on attempt 2), NB2 pass, NB4 fail from attempt 1; NB3 and NB5 not counted');
+  assert.equal(an.totals.attendees, 7, 'the totals still count every booked seat');
+});
