@@ -111,7 +111,10 @@ function createPickTimer(opts) {
     {id: 'test-geetansh-2026-11-03', date: '2026-11-03', hour: 10, mode: 'Online', kc: 'Knowledge Check - Investment Advisory (Buyer servicing)', trainer: 'Geetansh Kumar', attendees: 1},
     // Demo bookings (10 Nov 2026): both WFH, Owner Super Servicing, Geetansh, 1 attendee, submitted. No date given, so
     // they are removed only if exactly these two match.
-    {id: 'demo-geetansh-owner-super-servicing', mode: 'Online', kc: 'Owner Super Servicing', trainer: 'Geetansh Kumar', attendees: 1, status: 'submitted', count: 2}
+    {id: 'demo-geetansh-owner-super-servicing', mode: 'Online', kc: 'Owner Super Servicing', trainer: 'Geetansh Kumar', attendees: 1, status: 'submitted', count: 2},
+    // 14 Nov 2026: both bookings on Thu 12 Nov, 11:30 AM, Tenant Servicing, Shreelakshmi K, submitted (WFH 7, WFO 4).
+    {id: 'shreelakshmi-tenant-servicing-2026-11-12-wfh', date: '2026-11-12', hour: 11, mode: 'Online', kc: 'Tenant Servicing', trainer: 'Shreelakshmi K', attendees: 7, status: 'submitted'},
+    {id: 'shreelakshmi-tenant-servicing-2026-11-12-wfo', date: '2026-11-12', hour: 11, mode: 'Offline', kc: 'Tenant Servicing', trainer: 'Shreelakshmi K', attendees: 4, status: 'submitted'}
   ];
   function runRemovals() {
     S.settings.removalsDone = S.settings.removalsDone || [];
@@ -137,6 +140,29 @@ function createPickTimer(opts) {
     }
   }
   runRemovals();
+
+  /* Corrections asked for by the team: change fields on exact bookings, once. Matched the same way as removals;
+     if nothing matches yet it is tried again at the next start, and if more match than expected nothing changes. */
+  const CORRECTIONS = [
+    // 14 Nov 2026: Shreelakshmi K's two bookings on Fri 13 Nov, 11:30 AM, Tenant Servicing (WFH 6, WFO 4) are 1st attempts.
+    {id: 'shreelakshmi-2026-11-13-wfh-attempt-1', date: '2026-11-13', hour: 11, mode: 'Online', kc: 'Tenant Servicing', trainer: 'Shreelakshmi K', attendees: 6, attempt: 2, set: {attempt: 1}},
+    {id: 'shreelakshmi-2026-11-13-wfo-attempt-1', date: '2026-11-13', hour: 11, mode: 'Offline', kc: 'Tenant Servicing', trainer: 'Shreelakshmi K', attendees: 4, attempt: 2, set: {attempt: 1}}
+  ];
+  function runCorrections() {
+    S.settings.correctionsDone = S.settings.correctionsDone || [];
+    const same = (a, b) => String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() === String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const kcIs = (id, name) => same((S.kcs.find(k => k.id === id) || {}).name, name);
+    for (const c of CORRECTIONS) {
+      if (S.settings.correctionsDone.includes(c.id)) continue;
+      const hits = S.sessions.filter(x => x.date === c.date && x.hour === c.hour && x.mode === c.mode && (c.attempt == null || x.attempt === c.attempt)
+        && (kcIs(x.requestedKcId, c.kc) || kcIs(x.assignedKcId, c.kc))
+        && same((S.users.find(u => u.id === x.trainerId) || {}).name, c.trainer)
+        && S.attendees.filter(a => a.sessionId === x.id).length === c.attendees);
+      if (hits.length === 1) { Object.assign(hits[0], c.set); S.settings.correctionsDone.push(c.id); log(`corrected booking ${hits[0].id} (${c.id})`); }
+      else if (hits.length > 1) { S.settings.correctionsDone.push(c.id); log(`correction ${c.id}: ${hits.length} bookings match, nothing changed`); }
+    }
+  }
+  runCorrections();
   store.save(S);
 
   /* Operations run one at a time, so seat counts can never race. */

@@ -203,15 +203,27 @@ test('the KC list is added only once, and the test booking removal matches only 
   sess('demo1', '2026-11-10', 14, geet, 'kosup', 'kosup');
   sess('demo2', '2026-11-11', 10, geet, 'kosup', 'kosup');
   sess('realOs', '2026-11-12', 10, geet, 'kosup', 'kosup', 1, 'assigned');   // not submitted: stays
+  // Shreelakshmi's two bookings on 12 Nov (WFH 7, WFO 4), and her other booking that day, which stays.
+  S.users.push({ id: 'ushree', name: 'Shreelakshmi K', email: 'shreelakshmi.k@nobroker.in', role: 'trainer', active: true });
+  const ts = S.kcs.find(k => k.name === 'Tenant Servicing').id;
+  sess('shreeWfh', '2026-11-12', 11, 'ushree', ts, ts, 7);
+  sess('shreeWfo', '2026-11-12', 11, 'ushree', ts, ts, 4); S.sessions.at(-1).mode = 'Offline';
+  sess('shreeReal', '2026-11-12', 14, 'ushree', ts, ts, 4);
+  // Her 13 Nov bookings were entered as 2nd attempts; they become 1st attempts. Another 2nd attempt stays.
+  for (const [id, mode, n, hour] of [['fixWfh', 'Online', 6, 11], ['fixWfo', 'Offline', 4, 11], ['keep2', 'Online', 6, 14]]) {
+    sess(id, '2026-11-13', hour, 'ushree', ts, ts, n, 'assigned'); Object.assign(S.sessions.at(-1), { mode, attempt: 2 });
+  }
   S.settings.removalsDone = [];
   pt.close();
   const st = new Store(d, 'pick-timer.db'); st.load(); st.save(S); st.close();
   pt = mk(); S = pt.state();
   assert.equal(S.kcs.length, 101, 'a deleted KC is not added back (99 of the list + KC Test + Owner Super Servicing)');
   assert.equal(S.kcs[0].active, false);
-  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe', 'realOs']);
-  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs']);
-  assert.equal(S.settings.removalsDone.length, 3);
+  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe', 'realOs', 'shreeReal', 'fixWfh', 'fixWfo', 'keep2']);
+  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs', 'shreeReal', 'fixWfh', 'fixWfo', 'keep2']);
+  assert.deepEqual(S.sessions.slice(-3).map(s => s.attempt), [1, 1, 2]);
+  assert.equal(S.settings.correctionsDone.length, 2);
+  assert.equal(S.settings.removalsDone.length, 5);
   pt.close(); fs.rmSync(d, { recursive: true, force: true });
 });
 
