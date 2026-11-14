@@ -299,3 +299,19 @@ test('KC-wise results: only people who completed, each counted once; the latest 
   assert.deepEqual([k.sessions, k.attendees, k.pass, k.fail, k.passRate], [3, 3, 2, 1, 66.7], 'NB1 once (passed on attempt 2), NB2 pass, NB4 fail from attempt 1; NB3 and NB5 not counted');
   assert.equal(an.totals.attendees, 7, 'the totals still count every booked seat');
 });
+test('only the Super Admin can delete a session, submitted ones included', async () => {
+  const {S, run} = world();
+  S.users.push({id:'boss', name:'Boss', email:'boss@nobroker.in', role:'admin', active:true, superAdmin:true});
+  const {sessionId} = await run('t1', 'book', booking({attendees:people(3)}));
+  const other = await run('t1', 'book', booking({hour:14, attendees:people(2, 10)}));
+  await run('pia', 'assignKc', {sessionId, kcId:'k1'});
+  S.sessions.find(s => s.id === sessionId).status = 'submitted';
+  for (const who of ['t1', 'pia', 'admin']) await rejects(run(who, 'deleteSession', {sessionId}), /Only the Super Admin can delete a session/);
+  await rejects(C.run(S, {now:() => NOW, uid:p => p}, 'boss', 'deleteSession', {sessionId}, 'admin'), /Only the Super Admin/, 'not while switched to Admin');
+  const r = await run('boss', 'deleteSession', {sessionId});
+  assert.match(r.deleted, /, Sat 31 Oct 2026 11:30 AM – 12:30 PM$/);
+  assert.deepEqual(S.sessions.map(s => s.id), [other.sessionId]);
+  assert.equal(S.attendees.filter(a => a.sessionId === sessionId).length, 0);
+  assert.deepEqual([S.settings.deletedSessions[0].attendees, S.settings.deletedSessions[0].status, S.settings.deletedSessions[0].by], [3, 'submitted', 'boss']);
+  await rejects(run('boss', 'deleteSession', {sessionId}), /not found/);
+});

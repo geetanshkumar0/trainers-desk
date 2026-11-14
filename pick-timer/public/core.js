@@ -267,6 +267,19 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     Object.assign(s, {status:'submitted', submittedAt:env.now(), submittedBy:me.id});
     return {};
   };
+  /* Super Admin only: delete a booking in any state, submitted ones included, with its attendees and approvals.
+     A short record of what was deleted is kept in settings.deletedSessions (the last 200). */
+  ops.deleteSession = (S, env, me, p) => {
+    need(isSuper(me), 'Only the Super Admin can delete a session.', 403);
+    const s = byId(S.sessions, p.sessionId); need(s, 'Session not found.', 404);
+    const n = S.attendees.filter(a => a.sessionId === s.id).length;
+    S.sessions = S.sessions.filter(x => x.id !== s.id);
+    S.attendees = S.attendees.filter(a => a.sessionId !== s.id);
+    S.approvals = S.approvals.filter(a => a.sessionId !== s.id);
+    S.settings.deletedSessions = [{id:s.id, date:s.date, hour:s.hour, mode:s.mode, kc:kcName(S, s.assignedKcId || s.requestedKcId), trainer:userName(S, s.trainerId),
+      attempt:s.attempt, status:s.status, attendees:n, by:me.id, at:env.now()}, ...(S.settings.deletedSessions || [])].slice(0, 200);
+    return {deleted:`${kcName(S, s.assignedKcId || s.requestedKcId)}, ${dateLabel(s.date)} ${slotLabel(s.hour)}`};
+  };
   ops.reopenSession = (S, env, me, p) => {
     need(isAdmin(me), 'Only the administrator can reopen a submitted session.', 403);
     const s = byId(S.sessions, p.sessionId); need(s && s.status === 'submitted', 'Only submitted sessions can be reopened.', 409);

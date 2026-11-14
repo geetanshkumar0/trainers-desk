@@ -243,7 +243,8 @@ ${m.completion === 'not_completed' ? `<div class="row" style="margin-top:6px;fle
     return `<div class="head"><div><a class="small" href="#/sessions">‹ ${isTrainer() ? 'My bookings' : 'Sessions'}</a><h1>${h(kname(s.assignedKcId || s.requestedKcId))}</h1>
 <div class="row">${modeB(s.mode)} ${badge(s.status)} <span class="muted">${h(C.dateLabel(s.date))}, ${C.slotLabel(s.hour)}</span></div></div>
 <div class="row">${canEdit ? `<a class="btn" href="#/book?edit=${s.id}">Change</a><button class="btn danger" data-act="cancelBooking" data-id="${s.id}">Cancel booking</button>` : ''}
-${isAdmin() && s.status === 'submitted' ? `<button class="btn" data-act="reopen" data-id="${s.id}">Reopen</button>` : ''}</div></div>
+${isAdmin() && s.status === 'submitted' ? `<button class="btn" data-act="reopen" data-id="${s.id}">Reopen</button>` : ''}
+${isSuper() ? `<button class="btn danger" data-act="deleteSession" data-id="${s.id}">Delete session</button>` : ''}</div></div>
 ${action}
 <div class="card"><div class="facts">${facts.map(([k, v]) => `<div><b>${k}</b>${h(v)}</div>`).join('')}</div>${s.note ? `<p class="small" style="margin:12px 0 0"><b>Note:</b> ${h(s.note)}</p>` : ''}</div>
 <div class="card flush"><div style="padding:16px 18px 6px" class="row"><h2 style="margin:0;flex:1">Attendees (${s.attendees.length})</h2>
@@ -444,6 +445,11 @@ ${V.syncLog.map(l => `<tr><td class="nowrap small">${when(l.at)}</td><td class="
     openSession(el) { go('#/session/' + el.dataset.id); },
     sessTab(el) { ui.sessFilter.status = el.dataset.k; render(); },
     toggleCancelled(el) { ui.showCancelled = el.checked; render(); },
+    deleteSession(el) { const s = session(el.dataset.id); if (!s) return;
+      openModal(`<h2>Delete this session?</h2><p>${h(kname(s.assignedKcId || s.requestedKcId))} · ${h(C.dateLabel(s.date))}, ${C.slotLabel(s.hour)} · ${h(ML(s.mode))} · ${h(uname(s.trainerId))} · ${s.attendees.length} attendee${s.attendees.length === 1 ? '' : 's'} · ${h(STATUS[s.status] || s.status)}</p>
+<p class="muted">The booking, its attendees and their completion marks are removed from Pick Timer and from Analytics. This can't be undone. Scores stay in the KC Sheet.</p>
+<div class="row"><button class="btn danger" data-act="confirmDeleteSession" data-id="${s.id}">Delete session</button><button class="btn ghost" data-act="closeModal">Cancel</button></div>`); },
+    async confirmDeleteSession(el) { closeModal(); location.hash = '#/sessions'; delete ui.marks[el.dataset.id]; await op('deleteSession', {sessionId:el.dataset.id}, r => `Deleted: ${r.deleted}.`); },
     removeUser(el) { const u = user(el.dataset.id); if (!u) return;
       openModal(`<h2>Remove ${h(u.name)}?</h2><p class="muted">${h(u.email)} (${h(roleOf(u))}) will no longer be able to open Pick Timer. Their past bookings stay, under their name. You can add them again later.</p>
 <div class="row"><button class="btn danger" data-act="confirmRemoveUser" data-id="${u.id}">Remove</button><button class="btn ghost" data-act="closeModal">Cancel</button></div>`); },
