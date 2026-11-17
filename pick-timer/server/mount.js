@@ -163,6 +163,26 @@ function createPickTimer(opts) {
     }
   }
   runCorrections();
+
+  /* Attendee corrections: fix an attendee's details on every booking where they appear, matched by Emp ID, name
+     and email together, once. If nobody matches yet it is tried again at the next start. */
+  const ATTENDEE_FIXES = [
+    // 17 Nov 2026: Vivek Bhardwaj's Emp ID was entered as NBTS47072; it is NBTS47323.
+    {id: 'vivek-bhardwaj-empid-NBTS47323', empId: 'NBTS47072', name: 'Vivek Bhardwaj', email: 'vivek.bhardwaj@nobroker.in', set: {empId: 'NBTS47323'}}
+  ];
+  function runAttendeeFixes() {
+    S.settings.attendeeFixesDone = S.settings.attendeeFixesDone || [];
+    const same = (a, b) => String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() === String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    for (const f of ATTENDEE_FIXES) {
+      if (S.settings.attendeeFixesDone.includes(f.id)) continue;
+      const hits = S.attendees.filter(a => same(a.empId, f.empId) && same(a.name, f.name) && same(a.email, f.email));
+      if (!hits.length) continue;
+      hits.forEach(a => Object.assign(a, f.set));
+      S.settings.attendeeFixesDone.push(f.id);
+      log(`corrected ${hits.length} attendee record(s) (${f.id})`);
+    }
+  }
+  runAttendeeFixes();
   store.save(S);
 
   /* Operations run one at a time, so seat counts can never race. */

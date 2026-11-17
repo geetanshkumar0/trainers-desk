@@ -210,6 +210,10 @@ test('the KC list is added only once, and the test booking removal matches only 
   sess('shreeWfo', '2026-11-12', 11, 'ushree', ts, ts, 4); S.sessions.at(-1).mode = 'Offline';
   sess('shreeReal', '2026-11-12', 14, 'ushree', ts, ts, 4);
   // Her 13 Nov bookings were entered as 2nd attempts; they become 1st attempts. Another 2nd attempt stays.
+  // Vivek's Emp ID on his booking, and someone else with the same wrong ID (another name), who is left alone.
+  S.attendees.find(a => a.sessionId === 'shreeReal').empId = 'NBTS47072';
+  Object.assign(S.attendees.find(a => a.sessionId === 'shreeReal'), { name: 'Vivek Bhardwaj', email: 'Vivek.Bhardwaj@nobroker.in' });
+  Object.assign(S.attendees.filter(a => a.sessionId === 'shreeReal')[1], { empId: 'NBTS47072', name: 'Someone Else' });
   for (const [id, mode, n, hour] of [['fixWfh', 'Online', 6, 11], ['fixWfo', 'Offline', 4, 11], ['keep2', 'Online', 6, 14]]) {
     sess(id, '2026-11-13', hour, 'ushree', ts, ts, n, 'assigned'); Object.assign(S.sessions.at(-1), { mode, attempt: 2 });
   }
@@ -223,6 +227,7 @@ test('the KC list is added only once, and the test booking removal matches only 
   assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs', 'shreeReal', 'fixWfh', 'fixWfo', 'keep2']);
   assert.deepEqual(S.sessions.slice(-3).map(s => s.attempt), [1, 1, 2]);
   assert.equal(S.settings.correctionsDone.length, 2);
+  assert.deepEqual(S.attendees.filter(a => a.sessionId === 'shreeReal').slice(0, 2).map(a => a.empId), ['NBTS47323', 'NBTS47072']);
   assert.equal(S.settings.removalsDone.length, 5);
   pt.close(); fs.rmSync(d, { recursive: true, force: true });
 });
