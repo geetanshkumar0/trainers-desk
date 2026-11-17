@@ -78,13 +78,18 @@ export function ingestTracker(grids, locale, since) {
   const hr = [];
   CONFIG.HR_SHEETS.forEach(name => {
     const g = need(name);
-    const head = (g[0] || []).map(h => String(h).toLowerCase());
-    const cPhone = head.findIndex(h => /contact|mobile|phone/.test(h));
+    const head = (g[0] || []).map(h => String(h).trim().toLowerCase());
+    // Department is column F and Sub-department column G (since Nov 2026). The other columns are found by their
+    // header, so a moved column is never shown under the wrong heading; A to D stay code, name, status and DOJ.
+    const col = (re, not) => head.findIndex(h => re.test(h) && !(not && not.test(h)));
+    const cPhone = col(/contact|mobile|phone/), cLoc = col(/location/), cSource = col(/source/);
+    const cDept = 5, cSub = 6;
     for (let r = 1; r < g.length; r++) {
       const v = g[r] || [], id = normId(v[0]);
       if (!id) continue;
-      hr.push({ sheet: name, emp_id: id, name: text(v[1]), status: text(v[2]), doj: dateOf(v[3]), location: text(v[6]), source: text(v[8]),
-        department: text(v[9]), phone: cPhone >= 0 ? phoneText(v[cPhone]) : '' });
+      hr.push({ sheet: name, emp_id: id, name: text(v[1]), status: text(v[2]), doj: dateOf(v[3]),
+        location: cLoc >= 0 ? text(v[cLoc]) : '', source: cSource >= 0 ? text(v[cSource]) : '',
+        department: text(v[cDept]), sub_team: text(v[cSub]), phone: cPhone >= 0 ? phoneText(v[cPhone]) : '' });
     }
   });
 

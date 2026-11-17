@@ -170,7 +170,7 @@
     return unclaimedPool().filter(function (c) {
       if (state.dept && (c.department || NO_DEPT) !== state.dept) return false;
       return !q || c.name.toLowerCase().indexOf(q) >= 0 || c.empId.toLowerCase().indexOf(q) >= 0 || c.location.toLowerCase().indexOf(q) >= 0 ||
-        (c.department || '').toLowerCase().indexOf(q) >= 0;
+        (c.department || '').toLowerCase().indexOf(q) >= 0 || (c.subTeam || '').toLowerCase().indexOf(q) >= 0;
     });
   }
   function pickedIds() { return Object.keys(state.picked); }
@@ -1659,7 +1659,7 @@
         return '<tr class="pick' + (on ? ' on' : '') + '" data-pick="' + esc(c.empId) + '">' +
           '<td class="check"><input type="checkbox" tabindex="-1" aria-label="Select ' + esc(c.name) + '"' + (on ? ' checked' : '') + '></td>' +
           '<td><div class="nm">' + esc(c.name) + (c.removedBefore ? ' <span class="pill warn">Previously removed</span>' : '') + '</div><div class="id">' + esc(c.empId) + '</div></td>' +
-          '<td>' + esc(c.department || '–') + '</td>' +
+          '<td>' + esc(c.department || '–') + (c.subTeam ? '<div class="dim small">' + esc(c.subTeam) + '</div>' : '') + '</td>' +
           '<td class="num">' + esc(day(c.doj)) + '</td>' +
           '<td>' + esc(c.mode) + '</td>' +
           '<td>' + esc(c.location || '–') + '</td>' +

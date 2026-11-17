@@ -45,14 +45,17 @@ const MIGRATIONS = [
    DELETE FROM ojt_dashboard; DELETE FROM ojt_performance;
    INSERT OR REPLACE INTO mirror_dirty (tab, since) VALUES ('Attendance', '2026-10-29T18:30:00.000Z'), ('Attendance Log', '2026-10-29T18:30:00.000Z'), ('Change Requests', '2026-10-29T18:30:00.000Z'),
      ('Mock Scores', '2026-10-29T18:30:00.000Z'), ('NHT Status', '2026-10-29T18:30:00.000Z'), ('OJT Team', '2026-10-29T18:30:00.000Z'), ('OJT Manual Inputs', '2026-10-29T18:30:00.000Z'), ('OJT Dashboard', '2026-10-29T18:30:00.000Z'),
-     ('OJT Performance', '2026-10-29T18:30:00.000Z'), ('WhatsApp Log', '2026-10-29T18:30:00.000Z');`
+     ('OJT Performance', '2026-10-29T18:30:00.000Z'), ('WhatsApp Log', '2026-10-29T18:30:00.000Z');`,
+  // 17 Nov 2026: the HR sheets have a Sub-department column (G) next to Department (F).
+  // (A function: the column may already be there if schema.sql made the table.)
+  () => { if (!db.prepare('PRAGMA table_info(in_hr)').all().some(c => c.name === 'sub_team')) db.exec("ALTER TABLE in_hr ADD COLUMN sub_team TEXT NOT NULL DEFAULT ''"); }
 ];
 
 function migrate() {
   const at = db.prepare('PRAGMA user_version').get().user_version;
   MIGRATIONS.slice(at).forEach((sql, i) => {
     db.exec('BEGIN');
-    try { db.exec(sql); db.exec('PRAGMA user_version = ' + (at + i + 1)); db.exec('COMMIT'); }
+    try { if (typeof sql === 'function') sql(); else db.exec(sql); db.exec('PRAGMA user_version = ' + (at + i + 1)); db.exec('COMMIT'); }
     catch (e) { db.exec('ROLLBACK'); throw e; }
   });
 }

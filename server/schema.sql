@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS in_hr (
   location TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',
   department TEXT NOT NULL DEFAULT '',
+  sub_team TEXT NOT NULL DEFAULT '',
   phone TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS in_hr_emp ON in_hr (emp_id);

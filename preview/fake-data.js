@@ -72,13 +72,14 @@ export function build(today) {
   });
 
   // HR sheets: new joiners (unclaimed) + everyone above
-  const hrHead = ['E-Code', 'Employee Name', 'Status', 'DOJ', 'Contact Number', 'Official Email ID', 'Work Location', 'LWD', 'Source', 'Department'];
+  // Since Nov 2026: Department in F and Sub Department in G; the rest are found by their headers.
+  const hrHead = ['E-Code', 'Employee Name', 'Status', 'DOJ', 'Contact Number', 'Department', 'Sub Department', 'Work Location', 'Official Email ID', 'Source', 'LWD'];
   const wfo = [hrHead], wfh = [hrHead.slice()];
   for (let i = 0; i < 260; i++) {
     const p = person(rnd() < .3), d = pick(DEPTS), j = -Math.floor(rnd() * 60);
-    (p.wfh ? wfh : wfo).push([p.id, p.name, rnd() < .9 ? 'Active' : 'Inactive', D(j), p.phone, p.email, pick(CITIES), '', pick(SOURCES), d[0]]);
+    (p.wfh ? wfh : wfo).push([p.id, p.name, rnd() < .9 ? 'Active' : 'Inactive', D(j), p.phone, d[0], d[1], pick(CITIES), p.email, pick(SOURCES), '']);
   }
-  md.slice(1).forEach(r => wfo.push([r[2], r[3], r[11], r[0], r[5], r[4], r[8], '', pick(SOURCES), r[6]]));
+  md.slice(1).forEach(r => wfo.push([r[2], r[3], r[11], r[0], r[5], r[6], r[7], r[8], r[4], pick(SOURCES), '']));
 
   const sm = [new Array(15).fill('')];
   TRAINERS.forEach(([e]) => { const r = new Array(15).fill(''); r[12] = e; r[13] = MANAGER; r[14] = MENTOR; sm.push(r); });

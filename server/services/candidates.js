@@ -33,7 +33,7 @@ function excludedMap() {
   });
   return out;
 }
-const hrRows = () => db.all('SELECT emp_id empId, name, status, doj, location, source, department FROM in_hr ORDER BY seq');
+const hrRows = () => db.all('SELECT emp_id empId, name, status, doj, location, source, department, sub_team subTeam FROM in_hr ORDER BY seq');
 
 /** Everyone in the HR sheets whose Emp ID is not yet in Master Dashboard. */
 export function getUnclaimedCandidates(user) {

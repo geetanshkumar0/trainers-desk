@@ -20,7 +20,7 @@ export const CONFIG = {
   MASTER_SHEET: 'Master Dashboard',
   SCORING_SHEET: 'Scoring_Master',            // col M trainer, N manager, O mentor
   TRACKER_SHEET: 'T&D Performance Tracker',   // col B name, C email (display names)
-  HR_SHEETS: ['HR_WFO', 'HR_WFH'],            // col A code, B name, C status, D DOJ, G location, I source, J department
+  HR_SHEETS: ['HR_WFO', 'HR_WFH'],            // col A code, B name, C status, D DOJ, F department, G sub-department; location, source, phone by header
   ALSO_MAPPED_SHEETS: ['Sonika Dashboard'],   // Emp IDs in column C also count as mapped
   REMOVED_SHEET: 'Removed',                   // tagged "Previously removed" in the unclaimed list
   KC_SHEET: 'KC Sheet',                       // A Date of KC, B Emp ID, C Attempt, D Obtained %, E Status

@@ -52,6 +52,14 @@ test('sync copies the tracker into SQLite', async () => {
   assert.ok(db.get('SELECT grid FROM in_grids WHERE name = ?', CONFIG.OJT_TARGETS_SHEET));
 });
 
+test('HR sheets: Department from column F, Sub-department from G, the rest by header', () => {
+  const hr = data.tracker.HR_WFO;
+  assert.deepEqual([hr[0][5], hr[0][6]], ['Department', 'Sub Department']);
+  const row = hr.find((r, i) => i && r[5] && r[6] && r[7]);
+  const c = cand.getUnclaimedCandidates(ADMIN).find(x => x.empId === row[0]) || db.get('SELECT department, sub_team subTeam, location, source FROM in_hr WHERE emp_id = ?', row[0]);
+  assert.deepEqual([c.department, c.subTeam, c.location, c.source], [row[5], row[6], row[7], row[9]], 'location and source found by their headers, not by position');
+});
+
 test('nothing from the old tabs is imported: screens start with only Trainer Desk data', () => {
   assert.equal(db.get('SELECT COUNT(*) n FROM attendance').n + db.get('SELECT COUNT(*) n FROM change_requests').n + db.get('SELECT COUNT(*) n FROM mock_scores').n, 0);
   assert.deepEqual(cand.getTrainerBatches(TR, TR).batches, []);

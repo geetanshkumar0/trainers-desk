@@ -38,7 +38,20 @@ test('records from before 30 Oct 2026 are removed, later ones kept, once', () =>
 
 test('a brand-new database is left alone', () => {
   db.open(path.join(dir, 'new.db'));
-  assert.equal(db.get('PRAGMA user_version').user_version, 1);
+  assert.equal(db.get('PRAGMA user_version').user_version, 2, 'every migration counted as done');
+  assert.ok(db.all('PRAGMA table_info(in_hr)').some(c => c.name === 'sub_team'));
   db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('an existing database gets the HR Sub-department column', () => {
+  const file = path.join(dir, 'old-hr.db');
+  db.open(file);
+  db.exec('DROP TABLE in_hr; CREATE TABLE in_hr (seq INTEGER PRIMARY KEY, sheet TEXT NOT NULL, emp_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT \'\', status TEXT NOT NULL DEFAULT \'\', doj TEXT NOT NULL DEFAULT \'\', location TEXT NOT NULL DEFAULT \'\', source TEXT NOT NULL DEFAULT \'\', department TEXT NOT NULL DEFAULT \'\', phone TEXT NOT NULL DEFAULT \'\'); PRAGMA user_version = 1;');
+  db.close();
+  db.open(file);
+  assert.ok(db.all('PRAGMA table_info(in_hr)').some(c => c.name === 'sub_team'));
+  assert.equal(db.get('PRAGMA user_version').user_version, 2);
+  db.close();
+});
+
+test('clean up', () => fs.rmSync(dir, { recursive: true, force: true }));

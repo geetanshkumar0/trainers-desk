@@ -20,7 +20,7 @@ export function buildUnclaimed(hr, mapped, removed, excluded, isAdmin, fromIso) 
       empId: id, name: row.name,
       mode: id.indexOf('A') >= 0 ? 'WFH' : 'WFO',             // Master Dashboard's rule: an "A" in the Emp ID means WFH
       active: norm(row.status) === 'active', doj: row.doj,
-      location: row.location, source: row.source, department: row.department,
+      location: row.location, source: row.source, department: row.department, subTeam: row.subTeam || '',
       removedBefore: removed.has(id), excluded: excluded[id] || null
     });
   });
