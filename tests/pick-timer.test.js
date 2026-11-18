@@ -214,6 +214,13 @@ test('the KC list is added only once, and the test booking removal matches only 
   S.attendees.find(a => a.sessionId === 'shreeReal').empId = 'NBTS47072';
   Object.assign(S.attendees.find(a => a.sessionId === 'shreeReal'), { name: 'Vivek Bhardwaj', email: 'Vivek.Bhardwaj@nobroker.in' });
   Object.assign(S.attendees.filter(a => a.sessionId === 'shreeReal')[1], { empId: 'NBTS47072', name: 'Someone Else' });
+  // T Deepika on Heena's 18 Nov booking becomes Amita; Deepika on another booking stays.
+  S.users.push({ id: 'uheena', name: 'Heena Mirza', email: 'heena.mirza@nobroker.in', role: 'trainer', active: true });
+  const pms = S.kcs.find(k => k.name === 'PMS Final KC').id;
+  for (const [id, hour] of [['heena1', 10], ['heena2', 14]]) {
+    sess(id, '2026-11-18', hour, 'uheena', pms, null, 3, 'requested'); S.sessions.at(-1).mode = 'Offline';
+    Object.assign(S.attendees.filter(a => a.sessionId === id)[1], { empId: 'NBTS47448', name: 'T Deepika', email: 't.deepika@nobroker.in' });
+  }
   for (const [id, mode, n, hour] of [['fixWfh', 'Online', 6, 11], ['fixWfo', 'Offline', 4, 11], ['keep2', 'Online', 6, 14]]) {
     sess(id, '2026-11-13', hour, 'ushree', ts, ts, n, 'assigned'); Object.assign(S.sessions.at(-1), { mode, attempt: 2 });
   }
@@ -223,8 +230,11 @@ test('the KC list is added only once, and the test booking removal matches only 
   pt = mk(); S = pt.state();
   assert.equal(S.kcs.length, 101, 'a deleted KC is not added back (99 of the list + KC Test + Owner Super Servicing)');
   assert.equal(S.kcs[0].active, false);
-  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe', 'realOs', 'shreeReal', 'fixWfh', 'fixWfo', 'keep2']);
-  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs', 'shreeReal', 'fixWfh', 'fixWfo', 'keep2']);
+  assert.deepEqual(S.sessions.map(s => s.id), ['realAb', 'realGe', 'realOs', 'shreeReal', 'heena1', 'heena2', 'fixWfh', 'fixWfo', 'keep2']);
+  assert.deepEqual([...new Set(S.attendees.map(a => a.sessionId))], ['realAb', 'realGe', 'realOs', 'shreeReal', 'heena1', 'heena2', 'fixWfh', 'fixWfo', 'keep2']);
+  assert.deepEqual(['heena1', 'heena2'].map(id => S.attendees.filter(a => a.sessionId === id)[1]).map(a => [a.empId, a.name, a.email]),
+    [['NBTS47450', 'Amita Vishwakarma', 'amita.vishwakarma@nobroker.in'], ['NBTS47448', 'T Deepika', 't.deepika@nobroker.in']]);
+  assert.equal(S.attendees.filter(a => a.sessionId === 'heena1').length, 3);
   assert.deepEqual(S.sessions.slice(-3).map(s => s.attempt), [1, 1, 2]);
   assert.equal(S.settings.correctionsDone.length, 2);
   assert.deepEqual(S.attendees.filter(a => a.sessionId === 'shreeReal').slice(0, 2).map(a => a.empId), ['NBTS47323', 'NBTS47072']);

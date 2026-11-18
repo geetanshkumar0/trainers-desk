@@ -164,18 +164,25 @@ function createPickTimer(opts) {
   }
   runCorrections();
 
-  /* Attendee corrections: fix an attendee's details on every booking where they appear, matched by Emp ID, name
-     and email together, once. If nobody matches yet it is tried again at the next start. */
+  /* Attendee corrections: fix an attendee's details, matched by Emp ID, name and email together (and, with `session`,
+     only on that booking), once. If nobody matches yet it is tried again at the next start. */
   const ATTENDEE_FIXES = [
     // 17 Nov 2026: Vivek Bhardwaj's Emp ID was entered as NBTS47072; it is NBTS47323.
-    {id: 'vivek-bhardwaj-empid-NBTS47323', empId: 'NBTS47072', name: 'Vivek Bhardwaj', email: 'vivek.bhardwaj@nobroker.in', set: {empId: 'NBTS47323'}}
+    {id: 'vivek-bhardwaj-empid-NBTS47323', empId: 'NBTS47072', name: 'Vivek Bhardwaj', email: 'vivek.bhardwaj@nobroker.in', set: {empId: 'NBTS47323'}},
+    // 18 Nov 2026: on Heena Mirza's booking (Wed 18 Nov, 10:30 AM, WFO), T Deepika is replaced by Amita Vishwakarma.
+    {id: 'heena-2026-11-18-deepika-to-amita', empId: 'NBTS47448', name: 'T Deepika', email: 't.deepika@nobroker.in',
+      session: {date: '2026-11-18', hour: 10, mode: 'Offline', trainer: 'Heena Mirza'},
+      set: {empId: 'NBTS47450', name: 'Amita Vishwakarma', email: 'amita.vishwakarma@nobroker.in'}}
   ];
   function runAttendeeFixes() {
     S.settings.attendeeFixesDone = S.settings.attendeeFixesDone || [];
     const same = (a, b) => String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() === String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
     for (const f of ATTENDEE_FIXES) {
       if (S.settings.attendeeFixesDone.includes(f.id)) continue;
-      const hits = S.attendees.filter(a => same(a.empId, f.empId) && same(a.name, f.name) && same(a.email, f.email));
+      // With `session`, only the attendee on that one booking (date, slot, mode, trainer) is changed.
+      const onSession = a => { if (!f.session) return true; const x = S.sessions.find(q => q.id === a.sessionId), c = f.session;
+        return !!x && x.date === c.date && x.hour === c.hour && x.mode === c.mode && same((S.users.find(u => u.id === x.trainerId) || {}).name, c.trainer); };
+      const hits = S.attendees.filter(a => same(a.empId, f.empId) && same(a.name, f.name) && same(a.email, f.email) && onSession(a));
       if (!hits.length) continue;
       hits.forEach(a => Object.assign(a, f.set));
       S.settings.attendeeFixesDone.push(f.id);
