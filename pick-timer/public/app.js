@@ -71,7 +71,8 @@
     const pend = V.approvals.filter(a => a.status === 'pending').length;
     if (isTrainer()) return [['book', 'Book a KC'], ['sessions', 'My bookings'], ['calendar', 'Calendar'], ['analytics', 'Analytics']];
     const items = [['calendar', 'Calendar'], ['sessions', 'Sessions'], ['analytics', 'Analytics']];
-    if (isAdmin()) items.splice(2, 0, ['book', 'Pre-book'], ['approvals', 'Approvals', pend], ['slots', 'Slots']), items.push(['admin', 'Site administration']);
+    // Approvals shows only while older attempt-3 requests are still waiting; new bookings no longer need approval.
+    if (isAdmin()) items.splice(2, 0, ['book', 'Pre-book'], ...(pend ? [['approvals', 'Approvals', pend]] : []), ['slots', 'Slots']), items.push(['admin', 'Site administration']);
     return items;
   }
   // The first four menu items sit in the header; the rest open from the "More" arrow.
@@ -131,7 +132,7 @@ ${B?.error ? `<div class="note bad">${h(B.error)}</div>` : `<div class="note">${
     const days = [...new Set(V.slots.map(s => s.date))].slice(0, 18);
     if (!b.date) b.date = days.find(d => V.slots.some(s => s.date === d && !s.closed && C.slotStart(d, s.hour) > Date.now())) || days[0];
     const mineSeats = s => editing && b.status !== 'pending' && (() => { const me = session(b.editId); return me && me.date === s.date && me.hour === s.hour ? {[me.mode]:me.attendees.length} : {}; })() || {};
-    const pending = Number(b.attempt) === 3 && !isAdmin();
+    const pending = false;   // attempt 3 no longer needs approval
     const slotRows = C.HOURS.map(hr => {
       const s = V.slots.find(x => x.date === b.date && x.hour === hr);
       const started = C.slotStart(b.date, hr) <= Date.now();

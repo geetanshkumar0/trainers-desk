@@ -166,7 +166,7 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     if (isAdmin(me) && p.trainerId) { const t = byId(S.users, p.trainerId); need(t && t.active !== false && (t.role === 'trainer' || t.role === 'admin'), 'Choose the trainer.'); trainerId = t.id; }
     const b = readBooking(S, p);
     const attempt = Number(p.attempt); need([1, 2, 3].includes(attempt), 'Choose attempt 1, 2 or 3.');
-    const needsApproval = attempt === 3 && !isAdmin(me);
+    const needsApproval = false;   // since 21 Nov 2026 attempt 3 books straight away, like attempts 1 and 2
     checkSlot(S, env, b.date, b.hour, b.mode, needsApproval ? null : b.attendees.length, null, isAdmin(me));
     checkDuplicates(S, b.attendees, b.requestedKcId, null);
     const s = {id:env.uid('s'), date:b.date, hour:b.hour, mode:b.mode, trainerId, category:b.category, attempt, requestedKcId:b.requestedKcId, assignedKcId:null, invigilatorId:null,
@@ -648,10 +648,6 @@ ${table ? `<table style="border-collapse:collapse;width:100%;font-size:13px;marg
     let nd = today, n = 0;
     while (n < 4) { nd = addDays(nd, 1); if (weekday(nd) === 0) continue; n++;
       mk(nd, HOURS[(n * 2) % HOURS.length], n % 2 ? 'Online' : 'Offline', tr[n % 3], kcs[n % kcs.length], 'New Hire', 1, 3 + n, 'booked', null); }
-    // an attempt-3 request waiting for approval
-    let ad = addDays(today, 2); if (weekday(ad) === 0) ad = addDays(ad, 1);
-    const ps = mk(ad, 14, 'Online', tr[2], kcs[2], 'New Hire', 3, 2, 'pending', null);
-    S.approvals.push({id:env.uid('ap'), sessionId:ps.id, requestedBy:tr[2].id, status:'pending', at:now - 3600e3, decidedBy:null, decidedAt:null, note:''});
     S.demo = true;
   }
   /* A stand-in for the KC score sheet, built from the demo sessions (preview and --demo only). */

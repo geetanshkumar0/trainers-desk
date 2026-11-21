@@ -55,12 +55,21 @@ test('the same Emp ID cannot be booked twice for the same KC while open', async 
   await rejects(run('t2', 'book', booking({hour:14, attendees:people(1, 2)})), /NB2 is already booked for Legal Services/);
   await run('t2', 'book', booking({hour:14, requestedKcId:'k2', attendees:people(1, 2)})); // another KC is fine
 });
-test('attempt 3 waits for the administrator and holds no seats until approved', async () => {
+test('attempt 3 books straight away, with no approval', async () => {
   const {S, run} = world();
-  const {sessionId, status} = await run('t1', 'book', booking({attempt:3, attendees:people(2)}));
-  assert.equal(status, 'pending');
+  const r = await run('t1', 'book', booking({attempt:3, attendees:people(2)}));
+  assert.equal(r.status, 'booked');
+  assert.equal(C.slotInfo(S, '2026-10-31', 11).used.Online, 2);
+  assert.equal(S.approvals.length, 0);
+  assert.ok(!S.emailLog.some(m => /needs approval/.test(m.subject)));
+});
+test('an attempt-3 request made before the change can still be approved', async () => {
+  const {S, run} = world();
+  const {sessionId} = await run('t1', 'book', booking({attempt:3, attendees:people(2)}));
+  // As it was saved before 21 Nov 2026: waiting, holding no seats.
+  S.sessions.find(x => x.id === sessionId).status = 'pending';
+  S.approvals.push({id:'ap1', sessionId, requestedBy:'t1', status:'pending', at:NOW, decidedBy:null, decidedAt:null, note:''});
   assert.equal(C.slotInfo(S, '2026-10-31', 11).used.Online, 0);
-  assert.ok(S.emailLog.some(m => m.to === 'admin@nobroker.in' && /needs approval/.test(m.subject)));
   await rejects(run('t1', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only the administrator/);
   await run('t2', 'book', booking({attendees:people(7, 30)}));
   await rejects(run('admin', 'decideApproval', {approvalId:S.approvals[0].id, approve:true}), /Only 1 WFH seat left/);
